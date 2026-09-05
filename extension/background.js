@@ -638,6 +638,7 @@
               throw new Error('Secret title is required');
             }
 
+            const isNew = !entry.id;
             if (!entry.id) {
               entry.id = 'entry_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
               entry.createdAt = new Date().toISOString();
@@ -654,7 +655,14 @@
             }
 
             await saveAndSyncVault();
-            return { success: true, entry, syncVersion };
+            return {
+              success: true,
+              entry,
+              syncVersion,
+              enrolledKeys: capsuleKeySlots.length,
+              entryCount: inMemoryVault.length,
+              isNew
+            };
           }
 
           case 'DELETE_ENTRY': {

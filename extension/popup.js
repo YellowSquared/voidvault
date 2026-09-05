@@ -41,6 +41,12 @@
   const btnEnrollBackupHw = document.getElementById('btn-enroll-backup-hw');
   const btnEnrollBackupDev = document.getElementById('btn-enroll-backup-dev');
 
+  // Single Key Warning Modal
+  const modalSingleKeyWarning = document.getElementById('modal-single-key-warning');
+  const btnWarningAddBackup = document.getElementById('btn-warning-add-backup');
+  const btnWarningDismiss = document.getElementById('btn-warning-dismiss');
+  let warningTimerId = null;
+
   // Settings Modal
   const serverStatusBox = document.getElementById('server-status');
   const btnSettings = document.getElementById('btn-settings');
@@ -163,6 +169,11 @@
     modalBackup.classList.add('hidden');
     modalSettings.classList.add('hidden');
     modalKeys.classList.add('hidden');
+    if (modalSingleKeyWarning) modalSingleKeyWarning.classList.add('hidden');
+    if (warningTimerId) {
+      clearInterval(warningTimerId);
+      warningTimerId = null;
+    }
     errorBox.classList.add('hidden');
   }
 
@@ -482,6 +493,7 @@
 
     formSecret.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const isNewEntry = !fieldId.value;
       const entry = {
         id: fieldId.value || undefined,
         title: fieldTitle.value.trim(),
@@ -497,6 +509,11 @@
           closeModal();
           showToast('Secret saved');
           await loadSecrets(searchInput.value);
+
+          // If vault has only 1 key enrolled, display unskippable backup warning
+          if (isNewEntry && res.enrolledKeys <= 1) {
+            triggerSingleKeyWarning(res.entryCount || 1);
+          }
         } else {
           showError(res?.error || 'Failed to save secret');
         }
@@ -669,6 +686,63 @@
     btnEnrollBackupDev.addEventListener('click', async () => {
       await enrollBackupKey(true);
     });
+
+    // 11. Single Key Warning Listeners
+    if (btnWarningDismiss) {
+      btnWarningDismiss.addEventListener('click', () => {
+        if (btnWarningDismiss.disabled) return;
+        if (warningTimerId) {
+          clearInterval(warningTimerId);
+          warningTimerId = null;
+        }
+        if (modalSingleKeyWarning) modalSingleKeyWarning.classList.add('hidden');
+      });
+    }
+
+    if (btnWarningAddBackup) {
+      btnWarningAddBackup.addEventListener('click', async () => {
+        if (warningTimerId) {
+          clearInterval(warningTimerId);
+          warningTimerId = null;
+        }
+        if (modalSingleKeyWarning) modalSingleKeyWarning.classList.add('hidden');
+        await openKeysModal();
+      });
+    }
+  }
+
+  function getWarningDuration(count) {
+    if (count <= 3) return 3;
+    if (count === 4) return 5;
+    return 7;
+  }
+
+  function triggerSingleKeyWarning(entryCount) {
+    if (!modalSingleKeyWarning || !btnWarningDismiss) return;
+
+    if (warningTimerId) {
+      clearInterval(warningTimerId);
+      warningTimerId = null;
+    }
+
+    const duration = getWarningDuration(entryCount);
+    let secondsRemaining = duration;
+
+    modalSingleKeyWarning.classList.remove('hidden');
+    btnWarningDismiss.disabled = true;
+    btnWarningDismiss.textContent = `I understand (${secondsRemaining}s)`;
+
+    warningTimerId = setInterval(() => {
+      secondsRemaining -= 1;
+      if (secondsRemaining <= 0) {
+        clearInterval(warningTimerId);
+        warningTimerId = null;
+        btnWarningDismiss.disabled = false;
+        btnWarningDismiss.textContent = 'I understand';
+      } else {
+        btnWarningDismiss.textContent = `I understand (${secondsRemaining}s)`;
+      }
+    }, 1000);
   }
 
   async function openKeysModal() {

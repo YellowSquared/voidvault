@@ -571,6 +571,8 @@ async fn cmd_add(
     let dom = domain.unwrap_or_default();
     let not = notes.unwrap_or_default();
 
+    let is_new = !entries.iter().any(|e| e.title == title);
+
     // Check if existing entry should be updated
     if let Some(existing) = entries.iter_mut().find(|e| e.title == title) {
         existing.domain = dom;
@@ -621,6 +623,25 @@ async fn cmd_add(
                 }
             }
         }
+    }
+
+    // Unskippable warning if the vault only has 1 key enrolled
+    if is_new && capsule.key_slots.len() <= 1 && !quiet {
+        let count = entries.len();
+        let duration = match count {
+            0..=3 => 3,
+            4 => 5,
+            _ => 7,
+        };
+        eprintln!("\n⚠️  CRITICAL SECURITY WARNING: Only 1 security key is enrolled in this vault!");
+        eprintln!("   If you lose this key, everything you just saved is gone forever.");
+        eprintln!("   Please enroll a backup security key or export an offline backup.");
+        for s in (1..=duration).rev() {
+            eprint!("\r   Continuing in {}s... (unskippable) ", s);
+            let _ = io::stderr().flush();
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+        eprintln!("\r   Continuing in 0s... [Acknowledged]              \n");
     }
 
     Ok(())

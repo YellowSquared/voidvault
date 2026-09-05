@@ -261,6 +261,32 @@
           </div>
         </div>
       </div>
+
+      <!-- 7. SINGLE KEY WARNING MODAL -->
+      <div id="modal-single-key-warning" class="modal hidden">
+        <div class="modal-body warning-modal-body">
+          <div class="warning-icon-header">
+            <span class="warning-large-icon">⚠️</span>
+            <h3>Single Key Warning</h3>
+          </div>
+          <div class="warning-modal-content">
+            <p class="warning-critical-text">
+              If you lose this key, everything you just saved is gone forever.
+            </p>
+            <p class="warning-sub-text">
+              VoidVault uses zero-knowledge hardware encryption. There are no master passwords or recovery emails. Add a secondary backup key or export an offline backup now.
+            </p>
+            <div class="warning-modal-actions">
+              <button type="button" id="btn-warning-add-backup" class="btn btn-black btn-sm">
+                🔑 Add Backup Key Now
+              </button>
+              <button type="button" id="btn-warning-dismiss" class="btn btn-outline btn-sm btn-warning-dismiss" disabled>
+                I understand (3s)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 
