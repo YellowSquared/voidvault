@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-extension:
+    name: Build WebExtension Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build WebExtension XPI
+        run: |
+          mkdir -p dist
+          npx web-ext build --source-dir extension --overwrite-dest --artifacts-dir dist
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXT_FILE=$(ls dist/*.zip 2>/dev/null || ls dist/*.xpi)
+          mv "$EXT_FILE" "dist/voidvault-extension-v${VERSION}.xpi"
+          cd dist
+          sha256sum "voidvault-extension-v${VERSION}.xpi" > "voidvault-extension-v${VERSION}.xpi.sha256"
+
+      - name: Upload Extension to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/voidvault-extension-*.xpi
+            dist/voidvault-extension-*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-server:
+    name: Build Server (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            bin: voidvault-server
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            bin: voidvault-server
+          - target: x86_64-apple-darwin
+            os: macos-13
+            bin: voidvault-server
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            bin: voidvault-server.exe
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Binary
+        run: cargo build --release --target ${{ matrix.target }}
+        working-directory: server
+
+      - name: Package Binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG_NAME="voidvault-server-v${VERSION}-${{ matrix.target }}"
+          mkdir -p "$PKG_NAME"
+          cp "server/target/${{ matrix.target }}/release/${{ matrix.bin }}" "$PKG_NAME/"
+          cp README.md THREAT_MODEL.md "$PKG_NAME/"
+          tar -czvf "${PKG_NAME}.tar.gz" "$PKG_NAME"
+          sha256sum "${PKG_NAME}.tar.gz" > "${PKG_NAME}.tar.gz.sha256"
+
+      - name: Package Binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${env:GITHUB_REF_NAME}".TrimStart('v')
+          $pkgName = "voidvault-server-v${version}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $pkgName
+          Copy-Item "server/target/${{ matrix.target }}/release/${{ matrix.bin }}" -Destination $pkgName
+          Copy-Item "README.md" -Destination $pkgName
+          Copy-Item "THREAT_MODEL.md" -Destination $pkgName
+          Compress-Archive -Path "$pkgName/*" -DestinationPath "${pkgName}.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "${pkgName}.zip").Hash.ToLower()
+          "$hash  ${pkgName}.zip" | Out-File -Encoding ascii "${pkgName}.zip.sha256"
+
+      - name: Upload Server Binary to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            voidvault-server-*.tar.gz
+            voidvault-server-*.tar.gz.sha256
+            voidvault-server-*.zip
+            voidvault-server-*.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

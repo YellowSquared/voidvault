@@ -170,16 +170,17 @@ async fn get_vault(
 
     // 2. If not found directly, resolve secondary locator alias
     if row.is_none() {
-        let canonical: Option<String> = sqlx::query_scalar("SELECT canonical_locator FROM vault_locators WHERE locator = ?")
-            .bind(&locator)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e.to_string() })),
-                )
-            })?;
+        let canonical: Option<String> =
+            sqlx::query_scalar("SELECT canonical_locator FROM vault_locators WHERE locator = ?")
+                .bind(&locator)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": e.to_string() })),
+                    )
+                })?;
 
         if let Some(ref canon) = canonical {
             row = sqlx::query("SELECT version, capsule FROM vaults WHERE locator = ?")
@@ -238,11 +239,12 @@ async fn save_vault(
     let client_ip = extract_client_ip(&headers, addr.ip());
 
     // 1. Resolve canonical locator if this is an existing alias
-    let existing_canonical: Option<String> = sqlx::query_scalar("SELECT canonical_locator FROM vault_locators WHERE locator = ?")
-        .bind(&locator)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
+    let existing_canonical: Option<String> =
+        sqlx::query_scalar("SELECT canonical_locator FROM vault_locators WHERE locator = ?")
+            .bind(&locator)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
 
     let canonical_locator = existing_canonical.unwrap_or_else(|| locator.clone());
 
@@ -315,7 +317,7 @@ async fn save_vault(
 
     for loc in &all_locators {
         let _ = sqlx::query(
-            "INSERT OR REPLACE INTO vault_locators (locator, canonical_locator) VALUES (?1, ?2)"
+            "INSERT OR REPLACE INTO vault_locators (locator, canonical_locator) VALUES (?1, ?2)",
         )
         .bind(loc)
         .bind(&canonical_locator)
@@ -361,4 +363,56 @@ fn chrono_or_now() -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}", duration.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn test_rate_limiter_allows_under_limit_and_blocks_over_limit() {
+        let limiter = RateLimiter::new(3, Duration::from_secs(3600));
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+
+        assert!(limiter.check_and_record(ip).is_ok());
+        assert!(limiter.check_and_record(ip).is_ok());
+        assert!(limiter.check_and_record(ip).is_ok());
+
+        // 4th should be blocked
+        let err = limiter.check_and_record(ip);
+        assert!(err.is_err());
+        assert!(err.unwrap_err() <= 3601);
+
+        // Different IP should still be allowed
+        let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        assert!(limiter.check_and_record(ip2).is_ok());
+    }
+
+    #[test]
+    fn test_extract_all_locators_deduplication() {
+        let payload = VaultPayload {
+            version: 1,
+            capsule: json!({
+                "keySlots": [
+                    { "locator": "primary-loc" },
+                    { "locator": "secondary-loc" },
+                    { "locator": "primary-loc" }, // duplicate
+                    { "locator": "   " } // blank
+                ]
+            }),
+        };
+
+        let locators = extract_all_locators(&payload, "primary-loc");
+        assert_eq!(locators.len(), 2);
+        assert_eq!(locators[0], "primary-loc");
+        assert_eq!(locators[1], "secondary-loc");
+    }
+
+    #[test]
+    fn test_chrono_or_now_valid() {
+        let ts = chrono_or_now();
+        let secs: u64 = ts.parse().expect("Valid integer timestamp");
+        assert!(secs > 1700000000);
+    }
 }
