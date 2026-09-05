@@ -1,0 +1,28 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+Cargo.lock
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Environment and secrets
+.env
+.env.*
+
+# OS and Editor artifacts
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Extension packaging
+*.zip
+*.xpi
+web-ext-artifacts/
+node_modules/

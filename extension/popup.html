@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoidVault Minimal</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Clean Minimalist Header -->
+    <header class="header">
+      <div class="brand">
+        <span class="brand-title">VoidVault</span>
+        <span class="brand-tag">Prototype 2</span>
+      </div>
+      <div class="header-actions">
+        <div id="server-status" class="status-indicator" title="Server Sync Status">
+          <span id="status-dot" class="dot offline"></span>
+          <span id="status-label">Offline</span>
+        </div>
+        <button id="btn-lock" class="btn-sm btn-outline hidden">Lock</button>
+      </div>
+    </header>
+
+    <!-- Error Alert Box -->
+    <div id="error-box" class="alert-error hidden"></div>
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- MAIN VIEW -->
+    <main class="content">
+      <!-- 1. LOCKED VIEW -->
+      <section id="view-locked" class="view">
+        <div class="locked-panel">
+          <div class="lock-icon">🔒</div>
+          <h2 class="section-title">Vault is Locked</h2>
+          <p class="section-desc">Zero-knowledge hardware capsule. Your keys are never stored on any server.</p>
+
+          <button id="btn-unlock" class="btn btn-black">
+            Unlock with Security Key
+          </button>
+
+          <div class="alt-actions">
+            <button id="btn-dev-unlock" class="btn btn-outline">
+              Dev Quick Unlock (Simulated PRF)
+            </button>
+            <button id="btn-enroll-key" class="btn btn-outline">
+              Enroll Security Key (WebAuthn PRF)
+            </button>
+            <button id="btn-reset" class="btn-link text-danger">
+              Reset Local Vault & Start Fresh
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. UNLOCKED VIEW -->
+      <section id="view-unlocked" class="view hidden">
+        <div class="toolbar">
+          <input type="text" id="search-input" placeholder="Search by title, domain, user..." autocomplete="off">
+          <button id="btn-open-add" class="btn btn-black btn-new">+ New</button>
+        </div>
+
+        <div id="secrets-list" class="secrets-list">
+          <!-- Dynamically populated via popup.js -->
+        </div>
+
+        <div id="empty-state" class="empty-state hidden">
+          <p>No secrets stored yet. Click "+ New" to add your first secret.</p>
+        </div>
+      </section>
+
+      <!-- 3. ADD / EDIT SECRET MODAL -->
+      <div id="modal-secret" class="modal hidden">
+        <div class="modal-body">
+          <div class="modal-header">
+            <h3 id="modal-heading">Add Secret</h3>
+            <button id="btn-close-modal" class="btn-close">&times;</button>
+          </div>
+          <form id="form-secret">
+            <input type="hidden" id="field-id">
+
+            <div class="field">
+              <label for="field-title">Title</label>
+              <input type="text" id="field-title" placeholder="e.g. GitHub" required>
+            </div>
+
+            <div class="field">
+              <label for="field-domain">Domain</label>
+              <input type="text" id="field-domain" placeholder="e.g. github.com">
+            </div>
+
+            <div class="field">
+              <label for="field-username">Username</label>
+              <input type="text" id="field-username" placeholder="e.g. alice@example.com">
+            </div>
+
+            <div class="field">
+              <div class="label-row">
+                <label for="field-password">Password</label>
+                <button type="button" id="btn-gen-pass" class="btn-link">Generate</button>
+              </div>
+              <input type="text" id="field-password" placeholder="Password" required>
+            </div>
+
+            <div class="field">
+              <label for="field-notes">Notes</label>
+              <textarea id="field-notes" rows="3" placeholder="Optional notes..."></textarea>
+            </div>
+
+            <div class="modal-actions">
+              <button type="button" id="btn-cancel-modal" class="btn btn-outline">Cancel</button>
+              <button type="submit" class="btn btn-black">Save Secret</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="crypto.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

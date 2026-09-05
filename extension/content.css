@@ -1,0 +1,81 @@
+/**
+ * VoidVault Minimal Content Script Styles
+ * Crisp monochrome badge and dropdown. Zero animations.
+ */
+
+.voidvault-badge {
+  position: absolute;
+  z-index: 2147483640;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: #ffffff;
+  border: 1px solid #111827;
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  user-select: none;
+}
+
+.voidvault-badge:hover {
+  background: #f3f4f6;
+}
+
+.voidvault-badge svg {
+  width: 12px;
+  height: 12px;
+  fill: #111827;
+}
+
+/* Flash on autofill */
+.voidvault-autofilled {
+  outline: 2px solid #111827 !important;
+}
+
+/* Minimal Dropdown */
+.voidvault-dropdown {
+  position: absolute;
+  z-index: 2147483647;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  min-width: 220px;
+  padding: 6px;
+  color: #111827;
+}
+
+.voidvault-dropdown-header {
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b7280;
+  border-bottom: 1px solid #f3f4f6;
+  margin-bottom: 4px;
+}
+
+.voidvault-dropdown-item {
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+}
+
+.voidvault-dropdown-item:hover {
+  background: #f3f4f6;
+}
+
+.voidvault-dd-user {
+  font-weight: 600;
+  color: #111827;
+}
+
+.voidvault-dd-title {
+  font-size: 10px;
+  color: #6b7280;
+}
