@@ -101,6 +101,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             capsule TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS vault_locators (
+            locator TEXT PRIMARY KEY,
+            canonical_locator TEXT NOT NULL
+        );
         "#,
     )
     .execute(&pool)
@@ -151,7 +155,9 @@ async fn get_vault(
     Path(locator): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     use sqlx::Row;
-    let row = sqlx::query("SELECT version, capsule FROM vaults WHERE locator = ?")
+
+    // 1. Check if directly in vaults
+    let mut row = sqlx::query("SELECT version, capsule FROM vaults WHERE locator = ?")
         .bind(&locator)
         .fetch_optional(&state.db)
         .await
@@ -161,6 +167,33 @@ async fn get_vault(
                 Json(json!({ "error": e.to_string() })),
             )
         })?;
+
+    // 2. If not found directly, resolve secondary locator alias
+    if row.is_none() {
+        let canonical: Option<String> = sqlx::query_scalar("SELECT canonical_locator FROM vault_locators WHERE locator = ?")
+            .bind(&locator)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+            })?;
+
+        if let Some(ref canon) = canonical {
+            row = sqlx::query("SELECT version, capsule FROM vaults WHERE locator = ?")
+                .bind(canon)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": e.to_string() })),
+                    )
+                })?;
+        }
+    }
 
     match row {
         Some(r) => {
@@ -180,6 +213,21 @@ async fn get_vault(
     }
 }
 
+fn extract_all_locators(payload: &VaultPayload, primary_locator: &str) -> Vec<String> {
+    let mut locators = vec![primary_locator.to_string()];
+    if let Some(key_slots) = payload.capsule.get("keySlots").and_then(|v| v.as_array()) {
+        for slot in key_slots {
+            if let Some(loc) = slot.get("locator").and_then(|l| l.as_str()) {
+                let clean = loc.trim().to_string();
+                if !clean.is_empty() && !locators.contains(&clean) {
+                    locators.push(clean);
+                }
+            }
+        }
+    }
+    locators
+}
+
 async fn save_vault(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -189,9 +237,18 @@ async fn save_vault(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let client_ip = extract_client_ip(&headers, addr.ip());
 
-    // Check if vault already exists
-    let exists: bool = sqlx::query_scalar::<_, i32>("SELECT 1 FROM vaults WHERE locator = ?")
+    // 1. Resolve canonical locator if this is an existing alias
+    let existing_canonical: Option<String> = sqlx::query_scalar("SELECT canonical_locator FROM vault_locators WHERE locator = ?")
         .bind(&locator)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    let canonical_locator = existing_canonical.unwrap_or_else(|| locator.clone());
+
+    // 2. Check if canonical vault already exists
+    let exists: bool = sqlx::query_scalar::<_, i32>("SELECT 1 FROM vaults WHERE locator = ?")
+        .bind(&canonical_locator)
         .fetch_optional(&state.db)
         .await
         .map_err(|e| {
@@ -202,12 +259,12 @@ async fn save_vault(
         })?
         .is_some();
 
-    // If this is a BRAND NEW vault creation, enforce IP rate limit
+    // 3. If this is a BRAND NEW vault creation, enforce IP rate limit
     if !exists {
         if let Err(retry_after) = state.limiter.check_and_record(client_ip) {
             warn!(
                 client_ip = %client_ip,
-                locator = %locator,
+                locator = %canonical_locator,
                 retry_after_seconds = retry_after,
                 "Throttled: New vault creation limit reached for this IP"
             );
@@ -219,12 +276,13 @@ async fn save_vault(
                 })),
             ));
         }
-        info!(client_ip = %client_ip, locator = %locator, "Authorized new vault creation slot");
+        info!(client_ip = %client_ip, locator = %canonical_locator, "Authorized new vault creation slot");
     }
 
     let capsule_str = payload.capsule.to_string();
     let now = chrono_or_now();
 
+    // 4. Upsert canonical vault entry
     sqlx::query(
         r#"
         INSERT INTO vaults (locator, version, capsule, updated_at)
@@ -235,7 +293,7 @@ async fn save_vault(
             updated_at = excluded.updated_at
         "#,
     )
-    .bind(&locator)
+    .bind(&canonical_locator)
     .bind(payload.version)
     .bind(&capsule_str)
     .bind(&now)
@@ -248,12 +306,36 @@ async fn save_vault(
         )
     })?;
 
-    info!(locator = %locator, version = payload.version, is_new = !exists, "Vault capsule persisted");
+    // 5. Update multi-locator links
+    let all_locators = extract_all_locators(&payload, &canonical_locator);
+    let _ = sqlx::query("DELETE FROM vault_locators WHERE canonical_locator = ?")
+        .bind(&canonical_locator)
+        .execute(&state.db)
+        .await;
+
+    for loc in &all_locators {
+        let _ = sqlx::query(
+            "INSERT OR REPLACE INTO vault_locators (locator, canonical_locator) VALUES (?1, ?2)"
+        )
+        .bind(loc)
+        .bind(&canonical_locator)
+        .execute(&state.db)
+        .await;
+    }
+
+    info!(
+        canonical_locator = %canonical_locator,
+        total_locators = all_locators.len(),
+        version = payload.version,
+        is_new = !exists,
+        "Vault capsule persisted with multi-key locators"
+    );
 
     Ok(Json(json!({
         "status": "ok",
-        "locator": locator,
-        "version": payload.version
+        "locator": canonical_locator,
+        "version": payload.version,
+        "enrolled_locators": all_locators.len()
     })))
 }
 

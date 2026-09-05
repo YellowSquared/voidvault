@@ -20,6 +20,7 @@
           <span id="status-label">Offline</span>
         </div>
         <button id="btn-settings" class="btn-sm btn-icon" title="Server & Sync Settings" aria-label="Settings">⚙️</button>
+        <button id="btn-keys" class="btn-sm btn-outline hidden">Keys</button>
         <button id="btn-backup" class="btn-sm btn-outline hidden">Backup</button>
         <button id="btn-lock" class="btn-sm btn-outline hidden">Lock</button>
       </div>
@@ -182,6 +183,42 @@
             <div class="settings-actions">
               <button type="button" id="btn-test-server" class="btn btn-outline btn-sm">Test Ping</button>
               <button type="button" id="btn-save-settings" class="btn btn-black btn-sm">Save & Apply</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. SECURITY KEYS MODAL -->
+      <div id="modal-keys" class="modal hidden">
+        <div class="modal-body">
+          <div class="modal-header">
+            <h3>Enrolled Security Keys</h3>
+            <button id="btn-close-keys" class="btn-close">&times;</button>
+          </div>
+          <div class="keys-content">
+            <p class="section-desc">
+              Any enrolled YubiKey can decrypt this vault. Keys derive an independent keyslot using hardware PRF.
+            </p>
+
+            <div id="enrolled-keys-list" class="keys-list">
+              <!-- Dynamically rendered keys -->
+            </div>
+
+            <div class="add-key-box">
+              <div class="add-key-box-title">Enroll Backup Security Key</div>
+              <div class="form-group">
+                <label for="input-new-key-name">Key Label</label>
+                <input type="text" id="input-new-key-name" class="input-text" placeholder="e.g. Backup YubiKey 5C (Safe)" spellcheck="false" autocomplete="off">
+              </div>
+
+              <div class="add-key-actions">
+                <button type="button" id="btn-enroll-backup-hw" class="btn btn-black btn-sm">
+                  Enroll Hardware Key (Touch Key)
+                </button>
+                <button type="button" id="btn-enroll-backup-dev" class="btn btn-outline btn-sm">
+                  Enroll Dev Key (Simulated)
+                </button>
+              </div>
             </div>
           </div>
         </div>

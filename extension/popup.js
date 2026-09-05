@@ -28,6 +28,15 @@
   const btnExportEncrypted = document.getElementById('btn-export-encrypted');
   const btnExportPass = document.getElementById('btn-export-pass');
 
+  // Security Keys Modal
+  const btnKeys = document.getElementById('btn-keys');
+  const modalKeys = document.getElementById('modal-keys');
+  const btnCloseKeys = document.getElementById('btn-close-keys');
+  const enrolledKeysList = document.getElementById('enrolled-keys-list');
+  const inputNewKeyName = document.getElementById('input-new-key-name');
+  const btnEnrollBackupHw = document.getElementById('btn-enroll-backup-hw');
+  const btnEnrollBackupDev = document.getElementById('btn-enroll-backup-dev');
+
   // Settings Modal
   const serverStatusBox = document.getElementById('server-status');
   const btnSettings = document.getElementById('btn-settings');
@@ -114,9 +123,11 @@
     viewUnlocked.classList.add('hidden');
     btnLock.classList.add('hidden');
     btnBackup.classList.add('hidden');
+    btnKeys.classList.add('hidden');
     modalSecret.classList.add('hidden');
     modalBackup.classList.add('hidden');
     modalSettings.classList.add('hidden');
+    modalKeys.classList.add('hidden');
     errorBox.classList.add('hidden');
   }
 
@@ -125,6 +136,7 @@
     viewUnlocked.classList.remove('hidden');
     btnLock.classList.remove('hidden');
     btnBackup.classList.remove('hidden');
+    btnKeys.classList.remove('hidden');
     errorBox.classList.add('hidden');
   }
 
@@ -534,6 +546,148 @@
         showError('Failed to save settings: ' + err.message);
       }
     });
+
+    // 10. Security Keys Listeners
+    btnKeys.addEventListener('click', openKeysModal);
+    btnCloseKeys.addEventListener('click', () => {
+      modalKeys.classList.add('hidden');
+    });
+
+    btnEnrollBackupHw.addEventListener('click', async () => {
+      await enrollBackupKey(false);
+    });
+
+    btnEnrollBackupDev.addEventListener('click', async () => {
+      await enrollBackupKey(true);
+    });
+  }
+
+  async function openKeysModal() {
+    try {
+      const res = await extAPI.runtime.sendMessage({ action: 'GET_ENROLLED_KEYS' });
+      if (res && res.isUnlocked) {
+        renderKeysList(res.keys || [], res.currentKeyId);
+        inputNewKeyName.value = '';
+        modalKeys.classList.remove('hidden');
+      } else {
+        showError('Vault must be unlocked to manage security keys.');
+      }
+    } catch (err) {
+      showError('Failed to load security keys: ' + err.message);
+    }
+  }
+
+  function renderKeysList(keys, currentKeyId) {
+    enrolledKeysList.innerHTML = '';
+    if (!keys || keys.length === 0) {
+      const emptyMsg = document.createElement('div');
+      emptyMsg.className = 'empty-hint';
+      emptyMsg.textContent = 'No security keys enrolled';
+      enrolledKeysList.appendChild(emptyMsg);
+      return;
+    }
+
+    keys.forEach(k => {
+      const card = document.createElement('div');
+      card.className = 'key-card';
+
+      const left = document.createElement('div');
+      left.className = 'key-card-left';
+
+      const title = document.createElement('div');
+      title.className = 'key-card-title';
+
+      const keyIcon = document.createTextNode('🔑 ');
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = k.name || 'Security Key';
+
+      title.appendChild(keyIcon);
+      title.appendChild(titleSpan);
+
+      if (k.isCurrent) {
+        const badge = document.createElement('span');
+        badge.className = 'badge-active-key';
+        badge.textContent = 'Active Session Key';
+        title.appendChild(badge);
+      }
+      left.appendChild(title);
+
+      const meta = document.createElement('div');
+      meta.className = 'key-card-meta';
+      const locShort = (k.locator || '').substring(0, 12);
+      const dateStr = k.enrolledAt ? new Date(k.enrolledAt).toLocaleDateString() : 'Enrolled';
+      meta.textContent = `Locator: ${locShort}... • ${dateStr}`;
+      left.appendChild(meta);
+
+      card.appendChild(left);
+
+      if (!k.isCurrent && keys.length > 1) {
+        const btnRevoke = document.createElement('button');
+        btnRevoke.className = 'btn-sm btn-outline text-danger';
+        btnRevoke.textContent = 'Revoke';
+        btnRevoke.addEventListener('click', () => revokeKey(k.id, k.name));
+        card.appendChild(btnRevoke);
+      }
+
+      enrolledKeysList.appendChild(card);
+    });
+  }
+
+  async function enrollBackupKey(isDev = false) {
+    const keyName = (inputNewKeyName.value || 'Backup Security Key').trim();
+    try {
+      showToast('Touch your backup security key...');
+      let prfOutput, credentialId;
+
+      if (isDev) {
+        prfOutput = await VoidVaultCrypto.deriveSimulatedPrf('dev-backup-' + Date.now());
+        credentialId = 'dev-backup-key-' + Date.now();
+      } else {
+        const reg = await VoidVaultCrypto.registerWithWebAuthnPrf('user@voidvault.local', 'VoidVault Backup Key');
+        prfOutput = reg.prfOutput;
+        credentialId = reg.credentialId;
+      }
+
+      const res = await extAPI.runtime.sendMessage({
+        action: 'ADD_BACKUP_KEY',
+        name: keyName,
+        prfOutput: Array.from(prfOutput),
+        credentialId
+      });
+
+      if (res && res.success) {
+        renderKeysList(res.keys || [], res.currentKeyId);
+        inputNewKeyName.value = '';
+        showToast(`✓ "${keyName}" enrolled successfully!`);
+      } else {
+        showError(res?.error || 'Failed to enroll backup key');
+      }
+    } catch (err) {
+      showError('Enrollment failed: ' + (err.message || 'unknown error'));
+    }
+  }
+
+  async function revokeKey(keyId, keyName) {
+    const confirmed = confirm(
+      `Are you sure you want to revoke "${keyName}"?\n\n` +
+      `This security key will immediately be disabled and will no longer be able to decrypt this vault.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await extAPI.runtime.sendMessage({
+        action: 'REVOKE_KEY',
+        keyId
+      });
+      if (res && res.success) {
+        renderKeysList(res.keys || [], res.currentKeyId);
+        showToast(`Revoked "${keyName}"`);
+      } else {
+        showError(res?.error || 'Failed to revoke key');
+      }
+    } catch (err) {
+      showError('Revocation failed: ' + err.message);
+    }
   }
 
   function triggerDownload(filename, data, mimeType = 'application/octet-stream') {

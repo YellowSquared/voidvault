@@ -130,6 +130,77 @@ const VoidVaultCrypto = (function () {
     }
   }
 
+  // --- Multi-Key Envelope Encryption Primitives ---
+
+  function generateVmkBytes() {
+    return crypto.getRandomValues(new Uint8Array(32));
+  }
+
+  async function importVmk(rawVmk) {
+    return await crypto.subtle.importKey(
+      'raw',
+      rawVmk,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+
+  async function wrapVmk(rawVmk, prfAesKey) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      prfAesKey,
+      rawVmk
+    );
+    return {
+      iv: bufferToBase64(iv),
+      ciphertext: bufferToBase64(ciphertext)
+    };
+  }
+
+  async function unwrapVmk(wrappedVmk, prfAesKey) {
+    const iv = base64ToBuffer(wrappedVmk.iv);
+    const ciphertext = base64ToBuffer(wrappedVmk.ciphertext);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      prfAesKey,
+      ciphertext
+    );
+    return new Uint8Array(decrypted);
+  }
+
+  async function encryptPayloadWithVmk(vaultData, vmkCryptoKey) {
+    const plaintext = typeof vaultData === 'string' ? vaultData : JSON.stringify(vaultData);
+    const plaintextBytes = new TextEncoder().encode(plaintext);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertextBuffer = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      vmkCryptoKey,
+      plaintextBytes
+    );
+    return {
+      iv: bufferToBase64(iv),
+      ciphertext: bufferToBase64(ciphertextBuffer)
+    };
+  }
+
+  async function decryptPayloadWithVmk(payload, vmkCryptoKey) {
+    const iv = base64ToBuffer(payload.iv);
+    const ciphertext = base64ToBuffer(payload.ciphertext);
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      vmkCryptoKey,
+      ciphertext
+    );
+    const decryptedText = new TextDecoder().decode(decryptedBuffer);
+    try {
+      return JSON.parse(decryptedText);
+    } catch {
+      return decryptedText;
+    }
+  }
+
   function resolveRpId() {
     if (typeof window !== 'undefined' && window.location) {
       if (window.location.protocol === 'moz-extension:' || window.location.protocol === 'chrome-extension:') {
@@ -262,6 +333,12 @@ const VoidVaultCrypto = (function () {
     deriveAesGcmKeyFromPrf,
     encryptVaultBlob,
     decryptVaultBlob,
+    generateVmkBytes,
+    importVmk,
+    wrapVmk,
+    unwrapVmk,
+    encryptPayloadWithVmk,
+    decryptPayloadWithVmk,
     registerWithWebAuthnPrf,
     authenticateWithWebAuthnPrf,
     deriveSimulatedPrf

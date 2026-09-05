@@ -579,6 +579,81 @@ body {
   margin-top: 4px;
 }
 
+/* Security Keys Modal */
+.keys-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.keys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.key-card {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--bg-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.key-card-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.key-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--black);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.key-card-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.badge-active-key {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #000000;
+  color: #ffffff;
+  text-transform: uppercase;
+}
+
+.add-key-box {
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-key-box-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--black);
+}
+
+.add-key-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .hidden {
   display: none !important;
 }

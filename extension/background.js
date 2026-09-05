@@ -32,6 +32,10 @@
   let isUnlocked = false;
   let activeAesKey = null;
   let activePrfOutput = null;
+  let activeVmkBytes = null;
+  let activeVmkKey = null;
+  let activeKeySlotId = null;
+  let capsuleKeySlots = [];
   let inMemoryVault = null;
   let autoLockTimerId = null;
   let syncVersion = 1;
@@ -53,17 +57,23 @@
       VoidVaultCrypto.zeroBuffer(activePrfOutput);
       activePrfOutput = null;
     }
+    if (activeVmkBytes) {
+      VoidVaultCrypto.zeroBuffer(activeVmkBytes);
+      activeVmkBytes = null;
+    }
     if (inMemoryVault) {
       inMemoryVault.length = 0;
       inMemoryVault = null;
     }
     activeAesKey = null;
+    activeVmkKey = null;
+    activeKeySlotId = null;
     isUnlocked = false;
     if (autoLockTimerId) {
       clearTimeout(autoLockTimerId);
       autoLockTimerId = null;
     }
-    console.log('[VoidVault Minimal] Vault locked, volatile memory scrubbed.');
+    console.log('[VoidVault] Vault locked, volatile memory scrubbed.');
   }
 
   async function getLocator(credentialId) {
@@ -153,6 +163,29 @@
   checkServerHealth();
   setInterval(checkServerHealth, 20000);
 
+  async function saveAndSyncVault(credentialId = null) {
+    if (!activeVmkKey) {
+      throw new Error('No active vault master key');
+    }
+    syncVersion += 1;
+    const encPayload = await VoidVaultCrypto.encryptPayloadWithVmk(inMemoryVault, activeVmkKey);
+    const capsule = {
+      format: 'voidvault-multi-keyslot-v1',
+      version: 2,
+      keySlots: capsuleKeySlots,
+      payload: encPayload,
+      updatedAt: new Date().toISOString()
+    };
+    await extAPI.storage.local.set({
+      encryptedCapsule: capsule,
+      syncVersion: syncVersion
+    });
+
+    const primaryLocator = capsuleKeySlots.length > 0 ? capsuleKeySlots[0].locator : null;
+    pushToServer(capsule, syncVersion, credentialId || primaryLocator).catch(() => {});
+    return capsule;
+  }
+
   extAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
@@ -166,7 +199,8 @@
               syncVersion,
               serverConnected,
               serverUrl: serverBase,
-              count: inMemoryVault ? inMemoryVault.length : 0
+              count: inMemoryVault ? inMemoryVault.length : 0,
+              enrolledKeys: capsuleKeySlots.length
             };
           }
 
@@ -216,16 +250,56 @@
 
             if (capsule) {
               try {
-                inMemoryVault = await VoidVaultCrypto.decryptVaultBlob(capsule, activeAesKey);
+                // Check if capsule is modern Multi-Keyslot format
+                if (capsule.format === 'voidvault-multi-keyslot-v1' && Array.isArray(capsule.keySlots)) {
+                  capsuleKeySlots = capsule.keySlots;
+                  let rawVmk = null;
+                  let matchedSlot = null;
+
+                  for (const slot of capsuleKeySlots) {
+                    try {
+                      rawVmk = await VoidVaultCrypto.unwrapVmk(slot.wrappedVmk, activeAesKey);
+                      matchedSlot = slot;
+                      break;
+                    } catch {}
+                  }
+
+                  if (!rawVmk || !matchedSlot) {
+                    throw new Error('This security key is not enrolled in this vault.');
+                  }
+
+                  activeVmkBytes = rawVmk;
+                  activeVmkKey = await VoidVaultCrypto.importVmk(activeVmkBytes);
+                  activeKeySlotId = matchedSlot.id;
+                  inMemoryVault = await VoidVaultCrypto.decryptPayloadWithVmk(capsule.payload, activeVmkKey);
+                } else {
+                  // Legacy single-key format: decrypt directly and upgrade to multi-keyslot envelope
+                  inMemoryVault = await VoidVaultCrypto.decryptVaultBlob(capsule, activeAesKey);
+                  activeVmkBytes = VoidVaultCrypto.generateVmkBytes();
+                  activeVmkKey = await VoidVaultCrypto.importVmk(activeVmkBytes);
+                  const wrapped = await VoidVaultCrypto.wrapVmk(activeVmkBytes, activeAesKey);
+                  const loc = await getLocator(credentialId);
+                  activeKeySlotId = 'key-primary';
+                  capsuleKeySlots = [{
+                    id: activeKeySlotId,
+                    name: 'Primary Security Key',
+                    credentialId: credentialId || 'primary',
+                    locator: loc,
+                    enrolledAt: new Date().toISOString(),
+                    wrappedVmk: wrapped
+                  }];
+                  await saveAndSyncVault(credentialId);
+                }
+
                 if (!Array.isArray(inMemoryVault)) {
                   inMemoryVault = [];
                 }
               } catch (err) {
                 console.error('[VoidVault] Decryption failed:', err);
-                throw new Error('Decryption failed with this key. Capsule corrupted or key mismatch.');
+                throw new Error(err.message || 'Decryption failed with this key.');
               }
             } else {
-              // Initialize clean fresh vault
+              // Initialize brand new vault with multi-keyslot envelope
               inMemoryVault = [
                 {
                   id: 'sample-entry-1',
@@ -237,17 +311,115 @@
                   updatedAt: new Date().toISOString()
                 }
               ];
-              const newCapsule = await VoidVaultCrypto.encryptVaultBlob(inMemoryVault, activeAesKey);
-              await extAPI.storage.local.set({
-                encryptedCapsule: newCapsule,
-                syncVersion: 1
-              });
-              pushToServer(newCapsule, 1, credentialId).catch(() => {});
+              activeVmkBytes = VoidVaultCrypto.generateVmkBytes();
+              activeVmkKey = await VoidVaultCrypto.importVmk(activeVmkBytes);
+              const wrapped = await VoidVaultCrypto.wrapVmk(activeVmkBytes, activeAesKey);
+              const loc = await getLocator(credentialId);
+              activeKeySlotId = 'key-' + Date.now();
+              capsuleKeySlots = [{
+                id: activeKeySlotId,
+                name: 'Primary Security Key',
+                credentialId: credentialId || 'primary',
+                locator: loc,
+                enrolledAt: new Date().toISOString(),
+                wrappedVmk: wrapped
+              }];
+              await saveAndSyncVault(credentialId);
             }
 
             isUnlocked = true;
             resetAutoLockTimer();
-            return { success: true, count: inMemoryVault.length };
+            return {
+              success: true,
+              count: inMemoryVault.length,
+              enrolledKeys: capsuleKeySlots.length
+            };
+          }
+
+          case 'GET_ENROLLED_KEYS': {
+            if (!isUnlocked || !activeVmkKey) {
+              return { error: 'Vault is locked', isUnlocked: false };
+            }
+            resetAutoLockTimer();
+            const keys = capsuleKeySlots.map(s => ({
+              id: s.id,
+              name: s.name,
+              locator: s.locator,
+              enrolledAt: s.enrolledAt,
+              isCurrent: s.id === activeKeySlotId
+            }));
+            return { isUnlocked: true, currentKeyId: activeKeySlotId, keys };
+          }
+
+          case 'ADD_BACKUP_KEY': {
+            if (!isUnlocked || !activeVmkBytes) {
+              throw new Error('Vault must be unlocked to enroll a backup security key');
+            }
+            resetAutoLockTimer();
+            const { name, prfOutput, credentialId } = message;
+            if (!prfOutput || prfOutput.length !== 32) {
+              throw new Error('Invalid PRF output from backup security key');
+            }
+
+            const backupPrfAesKey = await VoidVaultCrypto.deriveAesGcmKeyFromPrf(new Uint8Array(prfOutput));
+            const backupLocator = await getLocator(credentialId);
+
+            if (capsuleKeySlots.some(s => s.locator === backupLocator || (credentialId && s.credentialId === credentialId))) {
+              throw new Error('This security key is already enrolled in this vault.');
+            }
+
+            const wrappedVmk = await VoidVaultCrypto.wrapVmk(activeVmkBytes, backupPrfAesKey);
+            const newSlot = {
+              id: 'key-' + Date.now(),
+              name: (name || 'Backup Security Key').trim(),
+              credentialId: credentialId || ('key-' + Date.now()),
+              locator: backupLocator,
+              enrolledAt: new Date().toISOString(),
+              wrappedVmk: wrappedVmk
+            };
+
+            capsuleKeySlots.push(newSlot);
+            await saveAndSyncVault();
+
+            const keys = capsuleKeySlots.map(s => ({
+              id: s.id,
+              name: s.name,
+              locator: s.locator,
+              enrolledAt: s.enrolledAt,
+              isCurrent: s.id === activeKeySlotId
+            }));
+
+            return { success: true, keys, newKeyId: newSlot.id };
+          }
+
+          case 'REVOKE_KEY': {
+            if (!isUnlocked || !activeVmkBytes) {
+              throw new Error('Vault is locked');
+            }
+            resetAutoLockTimer();
+            const { keyId } = message;
+            if (!keyId) {
+              throw new Error('Key ID is required');
+            }
+            if (keyId === activeKeySlotId) {
+              throw new Error('Cannot revoke the security key currently in use.');
+            }
+            if (capsuleKeySlots.length <= 1) {
+              throw new Error('Cannot revoke the only enrolled security key.');
+            }
+
+            capsuleKeySlots = capsuleKeySlots.filter(s => s.id !== keyId);
+            await saveAndSyncVault();
+
+            const keys = capsuleKeySlots.map(s => ({
+              id: s.id,
+              name: s.name,
+              locator: s.locator,
+              enrolledAt: s.enrolledAt,
+              isCurrent: s.id === activeKeySlotId
+            }));
+
+            return { success: true, keys };
           }
 
           case 'LOCK': {
@@ -279,7 +451,7 @@
           }
 
           case 'SAVE_ENTRY': {
-            if (!isUnlocked || !inMemoryVault || !activeAesKey) {
+            if (!isUnlocked || !inMemoryVault || !activeVmkKey) {
               throw new Error('Vault is locked');
             }
             resetAutoLockTimer();
@@ -303,37 +475,19 @@
               }
             }
 
-            syncVersion += 1;
-            const newBlob = await VoidVaultCrypto.encryptVaultBlob(inMemoryVault, activeAesKey);
-            await extAPI.storage.local.set({
-              encryptedCapsule: newBlob,
-              syncVersion
-            });
-
-            const storedCred = await extAPI.storage.local.get(['credentialId']);
-            pushToServer(newBlob, syncVersion, storedCred.credentialId).catch(() => {});
-
+            await saveAndSyncVault();
             return { success: true, entry, syncVersion };
           }
 
           case 'DELETE_ENTRY': {
-            if (!isUnlocked || !inMemoryVault || !activeAesKey) {
+            if (!isUnlocked || !inMemoryVault || !activeVmkKey) {
               throw new Error('Vault is locked');
             }
             resetAutoLockTimer();
             const id = message.id;
             inMemoryVault = inMemoryVault.filter(e => e.id !== id);
 
-            syncVersion += 1;
-            const newBlob = await VoidVaultCrypto.encryptVaultBlob(inMemoryVault, activeAesKey);
-            await extAPI.storage.local.set({
-              encryptedCapsule: newBlob,
-              syncVersion
-            });
-
-            const storedCred = await extAPI.storage.local.get(['credentialId']);
-            pushToServer(newBlob, syncVersion, storedCred.credentialId).catch(() => {});
-
+            await saveAndSyncVault();
             return { success: true, count: inMemoryVault.length };
           }
 
