@@ -19,7 +19,9 @@ Most "zero-knowledge" password managers still send a hashed master password or s
 
 ---
 
-## 🛡️ Core Security Architecture
+## 🛡️ Core Security Architecture & Threat Model
+
+> 📖 **Read the full formal threat specification:** [THREAT_MODEL.md](THREAT_MODEL.md) — Analyzes STRIDE threats, rogue CA/TLS interception, compromised server admin defenses, and cryptographic two-channel isolation.
 
 ```
 ┌────────────────────────┐
