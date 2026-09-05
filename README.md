@@ -1,9 +1,19 @@
 # VoidVault
 
-> ### 🔒 In Plain English:
-> **The server never even gets a salt or a password. It's all client-side.**
+> ### 🛡️ Threat Model & Security Axioms:
+> **VoidVault assumes that the following are 100% fully compromised:**
+> - ❌ **The Server:** The hosting provider, database, and any sysadmin with full root access.
+> - ❌ **The Network:** The Wi-Fi router, the ISP, and state actors with rogue Root CA certs intercepting TLS.
 > 
-> VoidVault is an anonymous, zero-knowledge password vault powered by physical FIDO2 keys (YubiKey / Nitrokey) using the WebAuthn PRF extension.
+> **What can an attacker with full root access and rogue CA certs do?**  
+> **Literally nothing.** They get:
+> - **0** master passwords
+> - **0** cryptographic salts
+> - **0** encryption keys
+> - **0** usernames or emails
+> - **0** website domains or entry titles
+> 
+> All they see is mathematically unbreakable noise. The server never even gets a salt or a password. It's all client-side. Decryption happens strictly in your browser using physical silicon inside your security key (YubiKey / WebAuthn PRF).
 
 ---
 

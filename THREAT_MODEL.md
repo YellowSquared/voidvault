@@ -1,17 +1,21 @@
 # VoidVault Threat Model & Security Axioms
 
-> **Classification:** Cryptographic Security Specification  
-> **Status:** Active Security Architecture Baseline  
-> **Target Subsystems:** Extension (Firefox MV3), Server (Axum + SQLite), Hardware (FIDO2 / WebAuthn PRF)
+> ### 🛡️ The Zero-Trust Baseline
+> **VoidVault assumes the following are 100% fully compromised:**
+> - ❌ **The Server:** The hosting provider, the SQLite database, and any sysadmin with full root access.
+> - ❌ **The Network:** The Wi-Fi router, the ISP, and state actors with rogue Root CA certs intercepting TLS.
+> 
+> **What can an attacker with full root access and rogue CA certs do?**  
+> **Literally nothing.** They get:
+> - **0** master passwords
+> - **0** cryptographic salts
+> - **0** decryption keys
+> - **0** usernames or emails
+> - **0** website domains or entry titles
+> 
+> All they see is mathematically unbreakable noise. Decryption happens strictly in your browser using the physical silicon inside your security key.
 
 ---
-
-## 1. Executive Summary & Core Security Axiom
-
-VoidVault is designed around a single non-negotiable security axiom:
-
-> ### 🛡️ The VoidVault Security Axiom:
-> **The server hosting VoidVault and the network carrying the traffic are assumed to be 100% fully compromised. The user's physical security key and local browser execution environment are trusted.**
 
 Traditional password managers (e.g. 1Password, Bitwarden, LastPass) rely on a user-chosen master password stretched via compute-intensive key derivation functions (PBKDF2, Argon2id). Even with high iteration counts, master passwords remain vulnerable to:
 1. **Low Human Entropy:** Most passwords chosen by humans contain <45 bits of true entropy.
