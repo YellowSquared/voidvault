@@ -13,6 +13,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      DOCKER_KEY: ${{ secrets.DOCKER_DEPLOY_KEY || secrets.DOCKERHUB_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -32,19 +34,30 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub (if secret configured)
-        if: ${{ secrets.DOCKER_DEPLOY_KEY != '' || secrets.DOCKERHUB_TOKEN != '' }}
+        if: ${{ env.DOCKER_KEY != '' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME || 'yellowsquared' }}
-          password: ${{ secrets.DOCKER_DEPLOY_KEY || secrets.DOCKERHUB_TOKEN }}
+          password: ${{ env.DOCKER_KEY }}
+
+      - name: Determine Target Registries
+        id: registries
+        run: |
+          IMAGES="ghcr.io/${{ github.repository_owner }}/voidvault-server"
+          if [ -n "$DOCKER_KEY" ]; then
+            IMAGES="${IMAGES}"$'\n'"yellowsquared/voidvault-server"
+          fi
+          {
+            echo "images<<EOF"
+            echo "$IMAGES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Extract Metadata (Tags & Labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ghcr.io/${{ github.repository_owner }}/voidvault-server
-            yellowsquared/voidvault-server
+          images: ${{ steps.registries.outputs.images }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
