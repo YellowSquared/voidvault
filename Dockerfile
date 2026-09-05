@@ -4,7 +4,7 @@ FROM rust:latest AS builder
 WORKDIR /app
 
 # Cache dependencies with locked versions
-COPY server/Cargo.toml server/Cargo.lock ./
+COPY server/Cargo.toml server/Cargo.lock* ./
 RUN mkdir src && echo 'fn main() { println!("dummy"); }' > src/main.rs
 RUN cargo build --release || true
 RUN rm -rf src
