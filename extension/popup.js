@@ -27,6 +27,8 @@
   const btnCloseBackup = document.getElementById('btn-close-backup');
   const btnExportEncrypted = document.getElementById('btn-export-encrypted');
   const btnExportPass = document.getElementById('btn-export-pass');
+  const btnImportEncrypted = document.getElementById('btn-import-encrypted');
+  const inputRestoreFile = document.getElementById('input-restore-file');
 
   // Security Keys Modal
   const btnKeys = document.getElementById('btn-keys');
@@ -481,6 +483,32 @@
 
     btnExportEncrypted.addEventListener('click', exportEncryptedBackup);
     btnExportPass.addEventListener('click', exportPassZip);
+
+    btnImportEncrypted.addEventListener('click', () => {
+      inputRestoreFile.value = '';
+      inputRestoreFile.click();
+    });
+
+    inputRestoreFile.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const res = await extAPI.runtime.sendMessage({
+          action: 'IMPORT_OFFLINE_BACKUP',
+          backupJson: text
+        });
+        if (res?.error) {
+          showError('Restore failed: ' + res.error);
+        } else {
+          modalBackup.classList.add('hidden');
+          showToast(`✓ Restored ${res.count} secrets from offline backup`);
+          await refreshVaultList();
+        }
+      } catch (err) {
+        showError('Restore error: ' + err.message);
+      }
+    });
 
     // 9. Server Settings Listeners
     const openSettings = async () => {

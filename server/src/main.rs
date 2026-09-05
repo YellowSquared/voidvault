@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -74,8 +75,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter("info,tower_http=info")
         .init();
 
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite://voidvault.db?mode=rwc".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        if let Ok(path) = std::env::var("DATABASE_PATH") {
+            format!("sqlite://{}?mode=rwc", path)
+        } else {
+            "sqlite://voidvault.db?mode=rwc".to_string()
+        }
+    });
 
     let max_creations: usize = std::env::var("VOIDVAULT_MAX_NEW_VAULTS_PER_HOUR")
         .ok()
@@ -128,7 +134,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let bind_addr: SocketAddr = "0.0.0.0:8080".parse()?;
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let bind_str = std::env::var("BIND_ADDR").unwrap_or_else(|_| format!("0.0.0.0:{}", port));
+    let bind_addr: SocketAddr = bind_str.parse()?;
     info!("VoidVault Minimal Server listening on http://{}", bind_addr);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -201,9 +209,15 @@ async fn get_vault(
             let version: i64 = r.try_get("version").unwrap_or(1);
             let capsule_raw: String = r.try_get("capsule").unwrap_or_default();
             let capsule_val: Value = serde_json::from_str(&capsule_raw).unwrap_or(Value::Null);
+
+            let mut hasher = Sha256::new();
+            hasher.update(capsule_raw.as_bytes());
+            let sha256_hex = format!("{:x}", hasher.finalize());
+
             Ok(Json(json!({
                 "locator": locator,
                 "version": version,
+                "capsule_sha256": sha256_hex,
                 "capsule": capsule_val
             })))
         }
@@ -248,18 +262,40 @@ async fn save_vault(
 
     let canonical_locator = existing_canonical.unwrap_or_else(|| locator.clone());
 
-    // 2. Check if canonical vault already exists
-    let exists: bool = sqlx::query_scalar::<_, i32>("SELECT 1 FROM vaults WHERE locator = ?")
-        .bind(&canonical_locator)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() })),
-            )
-        })?
-        .is_some();
+    // 2. Check if canonical vault already exists and get current version
+    let current_version: Option<i64> =
+        sqlx::query_scalar("SELECT version FROM vaults WHERE locator = ?")
+            .bind(&canonical_locator)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+            })?;
+
+    let exists = current_version.is_some();
+
+    // 2b. Anti-Rollback Defense: Reject state regressions
+    if let Some(curr_ver) = current_version {
+        if payload.version < curr_ver {
+            warn!(
+                canonical_locator = %canonical_locator,
+                submitted_version = payload.version,
+                current_version = curr_ver,
+                "State rollback rejected: submitted version is older than current vault version"
+            );
+            return Err((
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "State rollback rejected: submitted version is older than current vault version",
+                    "current_version": curr_ver,
+                    "submitted_version": payload.version
+                })),
+            ));
+        }
+    }
 
     // 3. If this is a BRAND NEW vault creation, enforce IP rate limit
     if !exists {
@@ -325,10 +361,15 @@ async fn save_vault(
         .await;
     }
 
+    let mut hasher = Sha256::new();
+    hasher.update(capsule_str.as_bytes());
+    let capsule_sha256 = format!("{:x}", hasher.finalize());
+
     info!(
         canonical_locator = %canonical_locator,
         total_locators = all_locators.len(),
         version = payload.version,
+        sha256 = %capsule_sha256,
         is_new = !exists,
         "Vault capsule persisted with multi-key locators"
     );
@@ -337,6 +378,7 @@ async fn save_vault(
         "status": "ok",
         "locator": canonical_locator,
         "version": payload.version,
+        "capsule_sha256": capsule_sha256,
         "enrolled_locators": all_locators.len()
     })))
 }
@@ -414,5 +456,14 @@ mod tests {
         let ts = chrono_or_now();
         let secs: u64 = ts.parse().expect("Valid integer timestamp");
         assert!(secs > 1700000000);
+    }
+
+    #[test]
+    fn test_capsule_sha256_deterministic() {
+        let raw = r#"{"keySlots":[],"payload":{"ciphertext":"abc","iv":"123"}}"#;
+        let mut hasher = Sha256::new();
+        hasher.update(raw.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        assert_eq!(hash.len(), 64);
     }
 }

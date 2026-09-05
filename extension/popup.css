@@ -446,7 +446,8 @@ body {
   gap: 6px;
 }
 
-.backup-box.legacy {
+.backup-box.legacy,
+.backup-box.restore {
   background: #ffffff;
 }
 

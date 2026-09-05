@@ -151,6 +151,19 @@
                 Export Unix pass Archive (.zip)
               </button>
             </div>
+
+            <div class="backup-box restore">
+              <div class="backup-box-header">
+                <strong>📥 Restore from Offline Backup (.voidvault)</strong>
+              </div>
+              <p class="backup-box-desc">
+                Restore entire vault from a sealed <code>.voidvault</code> backup file. <strong>Server-independent:</strong> recovers all credentials even if the remote server is permanently destroyed or wiped.
+              </p>
+              <input type="file" id="input-restore-file" accept=".voidvault,.json" style="display: none;">
+              <button id="btn-import-encrypted" class="btn btn-outline btn-sm">
+                Select .voidvault File & Restore
+              </button>
+            </div>
           </div>
         </div>
       </div>

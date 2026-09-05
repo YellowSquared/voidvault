@@ -67,6 +67,8 @@ Most "zero-knowledge" password managers still send a hashed master password or s
 2. **Phishing & Keylogger Immunity:** Without a master password, keyloggers and phishing sites have nothing to steal. The vault unlocks only when your physical finger touches your hardware key.
 3. **Non-Extractable In-Memory Keys:** Derived via native browser `crypto.subtle.deriveKey(..., extractable: false)`. Even browser devtools or rogue in-page scripts cannot export raw symmetric key bytes.
 4. **Anti-Abuse IP Rate Limiting:** Built-in sliding-window rate limiter prevents blob flooding (max 3 new vault creations per IP per hour; existing vault updates are unlimited). Payloads are strictly clamped to 1MB max.
+5. **Anti-Rollback State Defense:** Client and server enforce monotonic state versioning. Replaying older valid snapshots (downgrade attacks) is strictly detected and rejected.
+6. **Air-Gapped Disaster Recovery:** One-click encrypted `.voidvault` backup files allow offline restoration independently of any server.
 
 ---
 
@@ -81,17 +83,36 @@ voidvault/
 │   ├── popup.html/css/js  # Clean minimalist white/black UX (zero animations)
 │   ├── content.js/css     # Non-intrusive in-input badge and autofill
 │   └── test-page.html     # Minimal test bench portal
-└── server/                # Lightweight Blind Daemon
-    ├── Cargo.toml         # Axum 0.8, Tokio, SQLx SQLite, Tower-HTTP
-    └── src/
-        └── main.rs        # Blind vault API + IP rate limiter + SQLite store
+├── server/                # Lightweight Blind Daemon
+│   ├── Cargo.toml         # Axum 0.8, Tokio, SQLx SQLite, Tower-HTTP
+│   └── src/
+│       └── main.rs        # Blind vault API + IP rate limiter + SQLite store
+├── quadlet/               # Native Podman Quadlet (systemd generator)
+│   ├── voidvault.container# Rootless container systemd specification
+│   ├── voidvault-data.volume # Persistent volume definition
+│   └── install.sh         # Turnkey Quadlet installer
+├── Dockerfile             # Multi-stage minimal unprivileged container image
+└── docker-compose.yml     # Turnkey Docker Compose configuration
 ```
 
 ---
 
 ## 🚀 Quickstart Guide
 
-### 1. Build and Run the Server
+### Option A: Podman Quadlet (Recommended for Production / Systemd)
+
+```bash
+./quadlet/install.sh
+# Check status: systemctl --user status voidvault.service
+```
+
+### Option B: Docker Compose
+
+```bash
+docker compose up -d
+```
+
+### Option C: Native Cargo Build
 
 Prerequisites: Rust (1.80+)
 

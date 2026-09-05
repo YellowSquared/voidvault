@@ -76,6 +76,40 @@
     console.log('[VoidVault] Vault locked, volatile memory scrubbed.');
   }
 
+  async function decryptCapsuleWithKey(capsuleToDecrypt, prfAesKey) {
+    if (!capsuleToDecrypt) return null;
+    if (capsuleToDecrypt.format === 'voidvault-multi-keyslot-v1' && Array.isArray(capsuleToDecrypt.keySlots)) {
+      let rawVmk = null;
+      let matchedSlot = null;
+      for (const slot of capsuleToDecrypt.keySlots) {
+        try {
+          rawVmk = await VoidVaultCrypto.unwrapVmk(slot.wrappedVmk, prfAesKey);
+          matchedSlot = slot;
+          break;
+        } catch {}
+      }
+      if (!rawVmk || !matchedSlot) {
+        throw new Error('This security key is not enrolled in this vault.');
+      }
+      const vmkKey = await VoidVaultCrypto.importVmk(rawVmk);
+      const entries = await VoidVaultCrypto.decryptPayloadWithVmk(capsuleToDecrypt.payload, vmkKey);
+      return {
+        legacy: false,
+        rawVmk,
+        vmkKey,
+        keySlotId: matchedSlot.id,
+        keySlots: capsuleToDecrypt.keySlots,
+        entries: Array.isArray(entries) ? entries : []
+      };
+    } else {
+      const entries = await VoidVaultCrypto.decryptVaultBlob(capsuleToDecrypt, prfAesKey);
+      return {
+        legacy: true,
+        entries: Array.isArray(entries) ? entries : []
+      };
+    }
+  }
+
   async function getLocator(credentialId) {
     let id = credentialId;
     if (!id) {
@@ -131,7 +165,11 @@
       if (res && res.ok) {
         serverConnected = true;
         const data = await res.json();
-        return data?.capsule || null;
+        return {
+          capsule: data?.capsule || null,
+          version: typeof data?.version === 'number' ? data.version : 1,
+          sha256: data?.capsule_sha256 || null
+        };
       }
     } catch {
       serverConnected = false;
@@ -240,41 +278,49 @@
 
             // Check local storage or remote server for existing encrypted capsule
             const stored = await extAPI.storage.local.get(['encryptedCapsule', 'syncVersion']);
-            let capsule = stored.encryptedCapsule || null;
-            syncVersion = stored.syncVersion || 1;
+            const localCapsule = stored.encryptedCapsule || null;
+            const localVersion = typeof stored.syncVersion === 'number' ? stored.syncVersion : 1;
+            syncVersion = localVersion;
 
-            if (!capsule) {
-              // Try pulling from server
-              capsule = await pullFromServer(credentialId);
+            let candidateCapsule = localCapsule;
+            let candidateVersion = localVersion;
+            let usingRemote = false;
+
+            // Probe server for newer state or fallback if local storage is empty
+            const remoteData = await pullFromServer(credentialId);
+            if (remoteData && remoteData.capsule) {
+              const remoteVer = remoteData.version || 1;
+              if (localCapsule && remoteVer < localVersion) {
+                console.warn(`[VoidVault Security] ROLLBACK DEFENSE: Server has stale version ${remoteVer} < local version ${localVersion}. Rejecting server state.`);
+                // Heal server by re-pushing local state
+                pushToServer(localCapsule, localVersion, credentialId).catch(() => {});
+              } else if (remoteVer > localVersion || !localCapsule) {
+                console.log(`[VoidVault Sync] Server candidate is newer (${remoteVer} > ${localVersion}). Validating remote capsule.`);
+                candidateCapsule = remoteData.capsule;
+                candidateVersion = remoteVer;
+                usingRemote = true;
+              }
             }
 
-            if (capsule) {
+            if (candidateCapsule) {
               try {
-                // Check if capsule is modern Multi-Keyslot format
-                if (capsule.format === 'voidvault-multi-keyslot-v1' && Array.isArray(capsule.keySlots)) {
-                  capsuleKeySlots = capsule.keySlots;
-                  let rawVmk = null;
-                  let matchedSlot = null;
-
-                  for (const slot of capsuleKeySlots) {
-                    try {
-                      rawVmk = await VoidVaultCrypto.unwrapVmk(slot.wrappedVmk, activeAesKey);
-                      matchedSlot = slot;
-                      break;
-                    } catch {}
+                let decrypted = null;
+                try {
+                  decrypted = await decryptCapsuleWithKey(candidateCapsule, activeAesKey);
+                } catch (candidateErr) {
+                  if (usingRemote && localCapsule) {
+                    console.warn('[VoidVault Security] Remote capsule failed decryption/integrity check! Falling back to trusted local cache.');
+                    candidateCapsule = localCapsule;
+                    candidateVersion = localVersion;
+                    usingRemote = false;
+                    decrypted = await decryptCapsuleWithKey(localCapsule, activeAesKey);
+                  } else {
+                    throw candidateErr;
                   }
+                }
 
-                  if (!rawVmk || !matchedSlot) {
-                    throw new Error('This security key is not enrolled in this vault.');
-                  }
-
-                  activeVmkBytes = rawVmk;
-                  activeVmkKey = await VoidVaultCrypto.importVmk(activeVmkBytes);
-                  activeKeySlotId = matchedSlot.id;
-                  inMemoryVault = await VoidVaultCrypto.decryptPayloadWithVmk(capsule.payload, activeVmkKey);
-                } else {
-                  // Legacy single-key format: decrypt directly and upgrade to multi-keyslot envelope
-                  inMemoryVault = await VoidVaultCrypto.decryptVaultBlob(capsule, activeAesKey);
+                if (decrypted.legacy) {
+                  inMemoryVault = decrypted.entries;
                   activeVmkBytes = VoidVaultCrypto.generateVmkBytes();
                   activeVmkKey = await VoidVaultCrypto.importVmk(activeVmkBytes);
                   const wrapped = await VoidVaultCrypto.wrapVmk(activeVmkBytes, activeAesKey);
@@ -289,6 +335,19 @@
                     wrappedVmk: wrapped
                   }];
                   await saveAndSyncVault(credentialId);
+                } else {
+                  activeVmkBytes = decrypted.rawVmk;
+                  activeVmkKey = decrypted.vmkKey;
+                  activeKeySlotId = decrypted.keySlotId;
+                  capsuleKeySlots = decrypted.keySlots;
+                  inMemoryVault = decrypted.entries;
+                  syncVersion = candidateVersion;
+                  if (usingRemote) {
+                    await extAPI.storage.local.set({
+                      encryptedCapsule: candidateCapsule,
+                      syncVersion: candidateVersion
+                    });
+                  }
                 }
 
                 if (!Array.isArray(inMemoryVault)) {
@@ -489,6 +548,62 @@
 
             await saveAndSyncVault();
             return { success: true, count: inMemoryVault.length };
+          }
+
+          case 'EXPORT_OFFLINE_BACKUP': {
+            if (!isUnlocked || !activeVmkKey) {
+              throw new Error('Vault is locked. Unlock to export backup.');
+            }
+            resetAutoLockTimer();
+            const stored = await extAPI.storage.local.get(['encryptedCapsule', 'syncVersion']);
+            const backup = {
+              format: 'voidvault-backup-v1',
+              exportedAt: new Date().toISOString(),
+              syncVersion: syncVersion,
+              enrolledKeyCount: capsuleKeySlots.length,
+              capsule: stored.encryptedCapsule
+            };
+            return {
+              success: true,
+              filename: `voidvault-backup-${new Date().toISOString().slice(0, 10)}.voidvault`,
+              backupJson: JSON.stringify(backup, null, 2)
+            };
+          }
+
+          case 'IMPORT_OFFLINE_BACKUP': {
+            if (!isUnlocked || !activeAesKey) {
+              throw new Error('Vault must be unlocked with an enrolled security key to restore backup');
+            }
+            resetAutoLockTimer();
+            const { backupJson } = message;
+            if (!backupJson) {
+              throw new Error('No backup data provided');
+            }
+            let backup;
+            try {
+              backup = JSON.parse(backupJson);
+            } catch {
+              throw new Error('Invalid JSON format in backup file');
+            }
+
+            const candidateCapsule = backup.capsule || (backup.format === 'voidvault-multi-keyslot-v1' ? backup : null);
+            if (!candidateCapsule) {
+              throw new Error('Unsupported or missing capsule in backup file');
+            }
+
+            const decrypted = await decryptCapsuleWithKey(candidateCapsule, activeAesKey);
+            if (!decrypted || decrypted.legacy) {
+              throw new Error('Could not restore legacy or unrecognized backup format');
+            }
+
+            activeVmkBytes = decrypted.rawVmk;
+            activeVmkKey = decrypted.vmkKey;
+            activeKeySlotId = decrypted.keySlotId;
+            capsuleKeySlots = decrypted.keySlots;
+            inMemoryVault = decrypted.entries;
+            syncVersion = Math.max(syncVersion + 1, (backup.syncVersion || 0) + 1);
+            await saveAndSyncVault();
+            return { success: true, count: inMemoryVault.length, syncVersion };
           }
 
           case 'AUTOFILL_QUERY': {
