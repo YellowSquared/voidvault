@@ -16,9 +16,14 @@ if ! command -v podman &> /dev/null; then
     exit 1
 fi
 
-# 2. Build or tag container image locally
-echo "--> Building container image: localhost/voidvault-server:latest..."
-podman build -t localhost/voidvault-server:latest -f "${REPO_DIR}/Dockerfile" "${REPO_DIR}"
+# 2. Pull prebuilt image or build locally
+if [[ "${1:-}" == "--build" ]]; then
+    echo "--> Building container image locally..."
+    podman build -t yellowsquared/voidvault-server:latest -f "${REPO_DIR}/Dockerfile" "${REPO_DIR}"
+else
+    echo "--> Pulling pre-built container from Docker Hub: yellowsquared/voidvault-server:latest..."
+    podman pull docker.io/yellowsquared/voidvault-server:latest || podman build -t yellowsquared/voidvault-server:latest -f "${REPO_DIR}/Dockerfile" "${REPO_DIR}"
+fi
 
 # 3. Create user quadlet directory
 echo "--> Installing Quadlet units to ${QUADLET_DIR}..."

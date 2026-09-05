@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: voidvault-server:latest
+    image: yellowsquared/voidvault-server:latest
     container_name: voidvault-server
     restart: unless-stopped
     ports:
