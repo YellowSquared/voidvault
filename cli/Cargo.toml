@@ -30,3 +30,12 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 hex = "0.4"
 tabwriter = "1.4"
+
+[package.metadata.generate-rpm]
+name = "voidvault"
+summary = "Zero-knowledge FIDO2 hardware attestation password vault CLI"
+description = "VoidVault: Minimalist, blind zero-knowledge password vault CLI with full WebAuthn PRF parity."
+license = "MIT"
+assets = [
+    { source = "target/release/voidvault", dest = "/usr/bin/voidvault", mode = "0755" }
+]
