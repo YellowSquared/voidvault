@@ -12,8 +12,9 @@ use tabwriter::TabWriter;
 use client::VaultClient;
 use config::{get_default_capsule_path, load_config, save_config, write_secure_file};
 use crypto::{
-    calculate_locator, decrypt_entries, derive_prf_key, derive_simulated_prf, encrypt_entries,
-    generate_vmk, unwrap_vmk, wrap_vmk, DEFAULT_DEV_PASSPHRASE,
+    calculate_locator_from_signing_key, decrypt_entries, derive_prf_key, derive_signing_key,
+    derive_simulated_prf, encrypt_entries, generate_vmk, unwrap_vmk, wrap_vmk,
+    DEFAULT_DEV_PASSPHRASE,
 };
 use model::{KeySlot, VaultCapsule, VaultEntry};
 
@@ -266,7 +267,7 @@ async fn run_cli(cli: Cli) -> Result<(), String> {
             cmd_pull(&capsule_path, &server_url, cli.quiet).await
         }
         Commands::Push => {
-            cmd_push(&capsule_path, &server_url, cli.quiet).await
+            cmd_push(&capsule_path, &server_url, cli.dev, cli.key.as_deref(), cli.quiet).await
         }
         Commands::Import { source } => {
             cmd_import(&capsule_path, &source, cli.quiet)
@@ -359,12 +360,11 @@ fn cmd_init(
 
     let prf_secret = resolve_prf_key(dev_mode, key_arg);
     let prf_key = derive_prf_key(&prf_secret)?;
+    let signing_key = derive_signing_key(&prf_secret)?;
+    let (locator, public_key) = calculate_locator_from_signing_key(&signing_key);
 
     let vmk = generate_vmk();
     let wrapped_vmk = wrap_vmk(&vmk, &prf_key)?;
-
-    let cred_id = format!("cred_{}", hex::encode(&prf_secret[..8]));
-    let locator = calculate_locator(&cred_id);
 
     let empty_entries: Vec<VaultEntry> = Vec::new();
     let payload = encrypt_entries(&empty_entries, &vmk)?;
@@ -375,6 +375,8 @@ fn cmd_init(
             id: format!("slot_{}", hex::encode(&rand::random::<[u8; 4]>())),
             name: label.to_string(),
             locator,
+            public_key: Some(public_key),
+            alias_signature: None,
             wrapped_vmk,
             enrolled_at: chrono::Utc::now().to_rfc3339(),
         }],
@@ -603,17 +605,19 @@ async fn cmd_add(
     write_secure_file(path, &json_bytes)?;
 
     if !no_sync && !capsule.key_slots.is_empty() {
-        let locator = &capsule.key_slots[0].locator;
-        let client = VaultClient::new(server_url.to_string());
-        match client.push_vault(locator, capsule.version, &capsule).await {
-            Ok(_) => {
-                if !quiet {
-                    eprintln!("[✓] Synced update to remote server (v{})", capsule.version);
+        if let Ok(signing_key) = derive_signing_key(&prf_secret) {
+            let (my_locator, _) = calculate_locator_from_signing_key(&signing_key);
+            let client = VaultClient::new(server_url.to_string());
+            match client.push_vault(&my_locator, capsule.version, &capsule, &signing_key).await {
+                Ok(_) => {
+                    if !quiet {
+                        eprintln!("[✓] Synced update to remote server (v{})", capsule.version);
+                    }
                 }
-            }
-            Err(e) => {
-                if !quiet {
-                    eprintln!("[!] Note: Remote sync deferred ({})", e);
+                Err(e) => {
+                    if !quiet {
+                        eprintln!("[!] Note: Remote sync deferred ({})", e);
+                    }
                 }
             }
         }
@@ -672,9 +676,11 @@ async fn cmd_rm(
     }
 
     if !no_sync && !capsule.key_slots.is_empty() {
-        let locator = &capsule.key_slots[0].locator;
-        let client = VaultClient::new(server_url.to_string());
-        let _ = client.push_vault(locator, capsule.version, &capsule).await;
+        if let Ok(signing_key) = derive_signing_key(&prf_secret) {
+            let (my_locator, _) = calculate_locator_from_signing_key(&signing_key);
+            let client = VaultClient::new(server_url.to_string());
+            let _ = client.push_vault(&my_locator, capsule.version, &capsule, &signing_key).await;
+        }
     }
 
     Ok(())
@@ -683,8 +689,8 @@ async fn cmd_rm(
 async fn cmd_sync(
     path: &Path,
     server_url: &str,
-    _dev_mode: bool,
-    _key_arg: Option<&str>,
+    dev_mode: bool,
+    key_arg: Option<&str>,
     quiet: bool,
 ) -> Result<(), String> {
     let local_capsule = load_capsule_from_disk(path)?;
@@ -722,8 +728,11 @@ async fn cmd_sync(
                         local_capsule.version, remote.version
                     );
                 }
+                let prf_secret = resolve_prf_key(dev_mode, key_arg);
+                let signing_key = derive_signing_key(&prf_secret)?;
+                let (my_locator, _) = calculate_locator_from_signing_key(&signing_key);
                 client
-                    .push_vault(locator, local_capsule.version, &local_capsule)
+                    .push_vault(&my_locator, local_capsule.version, &local_capsule, &signing_key)
                     .await?;
                 if !quiet {
                     eprintln!("[✓] Remote updated to v{}", local_capsule.version);
@@ -738,8 +747,11 @@ async fn cmd_sync(
             if !quiet {
                 eprintln!("[*] Server has no existing record for this vault. Registering...");
             }
+            let prf_secret = resolve_prf_key(dev_mode, key_arg);
+            let signing_key = derive_signing_key(&prf_secret)?;
+            let (my_locator, _) = calculate_locator_from_signing_key(&signing_key);
             client
-                .push_vault(locator, local_capsule.version, &local_capsule)
+                .push_vault(&my_locator, local_capsule.version, &local_capsule, &signing_key)
                 .await?;
             if !quiet {
                 eprintln!("[✓] Pushed local vault to server (v{})", local_capsule.version);
@@ -773,17 +785,25 @@ async fn cmd_pull(path: &Path, server_url: &str, quiet: bool) -> Result<(), Stri
     Ok(())
 }
 
-async fn cmd_push(path: &Path, server_url: &str, quiet: bool) -> Result<(), String> {
+async fn cmd_push(
+    path: &Path,
+    server_url: &str,
+    dev_mode: bool,
+    key_arg: Option<&str>,
+    quiet: bool,
+) -> Result<(), String> {
     let local_capsule = load_capsule_from_disk(path)?;
     if local_capsule.key_slots.is_empty() {
         return Err("No key slots found in local capsule.".to_string());
     }
 
-    let locator = &local_capsule.key_slots[0].locator;
+    let prf_secret = resolve_prf_key(dev_mode, key_arg);
+    let signing_key = derive_signing_key(&prf_secret)?;
+    let (my_locator, _) = calculate_locator_from_signing_key(&signing_key);
     let client = VaultClient::new(server_url.to_string());
 
     client
-        .push_vault(locator, local_capsule.version, &local_capsule)
+        .push_vault(&my_locator, local_capsule.version, &local_capsule, &signing_key)
         .await?;
 
     if !quiet {

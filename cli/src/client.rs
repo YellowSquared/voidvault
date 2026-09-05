@@ -1,5 +1,7 @@
 use std::time::Duration;
 use reqwest::Client;
+use ed25519_dalek::SigningKey;
+use crate::crypto::{derive_public_key_hex, sign_vault_write};
 use crate::model::{ServerVaultPushPayload, ServerVaultResponse, VaultCapsule};
 
 pub struct VaultClient {
@@ -53,11 +55,26 @@ impl VaultClient {
         Ok(Some(body))
     }
 
-    pub async fn push_vault(&self, locator: &str, version: i64, capsule: &VaultCapsule) -> Result<(), String> {
+    pub async fn push_vault(
+        &self,
+        locator: &str,
+        version: i64,
+        capsule: &VaultCapsule,
+        signing_key: &SigningKey,
+    ) -> Result<(), String> {
         let url = format!("{}/api/vault/{}", self.server_base, locator);
+        let capsule_val = serde_json::to_value(capsule)
+            .map_err(|e| format!("Failed to serialize capsule to value: {}", e))?;
+        let capsule_json = serde_json::to_string(&capsule_val)
+            .map_err(|e| format!("Failed to serialize capsule: {}", e))?;
+        let public_key = derive_public_key_hex(signing_key);
+        let signature = sign_vault_write(signing_key, locator, version, &capsule_json);
+
         let payload = ServerVaultPushPayload {
             version,
             capsule: capsule.clone(),
+            public_key,
+            signature,
         };
 
         let res = self.client.post(&url)

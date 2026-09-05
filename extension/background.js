@@ -49,6 +49,7 @@
   let isUnlocked = false;
   let activeAesKey = null;
   let activePrfOutput = null;
+  let activeSigningKey = null;
   let activeVmkBytes = null;
   let activeVmkKey = null;
   let activeKeySlotId = null;
@@ -83,6 +84,7 @@
       inMemoryVault = null;
     }
     activeAesKey = null;
+    activeSigningKey = null;
     activeVmkKey = null;
     activeKeySlotId = null;
     isUnlocked = false;
@@ -127,20 +129,37 @@
     }
   }
 
-  async function getLocator(credentialId) {
-    let id = credentialId;
-    if (!id) {
-      const stored = await extAPI.storage.local.get(['credentialId']);
-      id = stored.credentialId || 'default-user';
+  async function getLocator(credentialId = null) {
+    if (activeSigningKey && activeSigningKey.locator) {
+      return activeSigningKey.locator;
     }
+    if (credentialId && credentialId.length === 64 && /^[0-9a-fA-F]+$/.test(credentialId)) {
+      return credentialId.toLowerCase();
+    }
+    const stored = await extAPI.storage.local.get(['locator', 'credentialId']);
+    if (stored && stored.locator) {
+      return stored.locator;
+    }
+    let id = credentialId || stored?.credentialId || 'default-user';
     const hashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(id));
     return VoidVaultCrypto.bufferToHex(hashBuf);
   }
 
-  async function pushToServer(encryptedCapsule, version, credentialId) {
+  async function pushToServer(encryptedCapsule, version, targetLocator = null) {
     try {
+      if (!activeSigningKey) {
+        console.warn('[VoidVault] Cannot push to server without active signing key');
+        return false;
+      }
       const serverBase = await getServerBase();
-      const locator = await getLocator(credentialId);
+      const locator = targetLocator || activeSigningKey.locator;
+      const signature = await VoidVaultCrypto.signVaultWrite(
+        activeSigningKey.privateKey,
+        locator,
+        version,
+        encryptedCapsule
+      );
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2500);
 
@@ -149,7 +168,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           version: version,
-          capsule: encryptedCapsule
+          capsule: encryptedCapsule,
+          public_key: activeSigningKey.publicKeyHex,
+          signature: signature
         }),
         signal: controller.signal
       }).catch(() => null);
@@ -165,10 +186,11 @@
     return false;
   }
 
-  async function pullFromServer(credentialId) {
+  async function pullFromServer(targetLocator = null) {
     try {
       const serverBase = await getServerBase();
-      const locator = await getLocator(credentialId);
+      const locator = targetLocator || await getLocator();
+      if (!locator) return null;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2500);
 
@@ -229,7 +251,7 @@
   periodicHealthCheck();
   setInterval(periodicHealthCheck, 20000);
 
-  async function saveAndSyncVault(credentialId = null) {
+  async function saveAndSyncVault() {
     if (!activeVmkKey) {
       throw new Error('No active vault master key');
     }
@@ -249,9 +271,8 @@
       vaultMode: currentMode
     });
 
-    if (currentMode === 'remote') {
-      const primaryLocator = capsuleKeySlots.length > 0 ? capsuleKeySlots[0].locator : null;
-      pushToServer(capsule, syncVersion, credentialId || primaryLocator).catch(() => {});
+    if (currentMode === 'remote' && activeSigningKey) {
+      pushToServer(capsule, syncVersion, activeSigningKey.locator).catch(() => {});
     }
     return capsule;
   }
@@ -311,15 +332,17 @@
             if (currentMode !== 'remote') {
               throw new Error('Vault is in Local-Only mode. Switch to Remote Sync mode in Settings first.');
             }
-            const stored = await extAPI.storage.local.get(['encryptedCapsule', 'credentialId']);
+            if (!isUnlocked || !activeSigningKey) {
+              throw new Error('Vault is locked. Unlock before syncing.');
+            }
+            const stored = await extAPI.storage.local.get(['encryptedCapsule']);
             const capsule = stored.encryptedCapsule;
             if (!capsule) {
               throw new Error('Vault is empty; nothing to sync.');
             }
-            const primaryLocator = capsule.keySlots && capsule.keySlots.length > 0 ? capsule.keySlots[0].locator : null;
-            const ok = await pushToServer(capsule, syncVersion, stored.credentialId || primaryLocator);
+            const ok = await pushToServer(capsule, syncVersion, activeSigningKey.locator);
             if (!ok) {
-              throw new Error('Failed to reach relay server.');
+              throw new Error('Failed to reach relay server or verify signature.');
             }
             return { success: true, version: syncVersion };
           }
@@ -340,10 +363,12 @@
 
             activePrfOutput = new Uint8Array(prfOutput);
             activeAesKey = await VoidVaultCrypto.deriveAesGcmKeyFromPrf(activePrfOutput);
+            activeSigningKey = await VoidVaultCrypto.deriveSigningKeypairFromPrf(activePrfOutput);
 
-            if (credentialId) {
-              await extAPI.storage.local.set({ credentialId });
-            }
+            await extAPI.storage.local.set({
+              locator: activeSigningKey.locator,
+              ...(credentialId ? { credentialId } : {})
+            });
 
             // Check local storage or remote server for existing encrypted capsule
             const stored = await extAPI.storage.local.get(['encryptedCapsule', 'syncVersion']);
@@ -358,13 +383,13 @@
             const currentMode = await getVaultMode();
             if (currentMode === 'remote') {
               // Probe server for newer state or fallback if local storage is empty
-              const remoteData = await pullFromServer(credentialId);
+              const remoteData = await pullFromServer(activeSigningKey.locator);
               if (remoteData && remoteData.capsule) {
                 const remoteVer = remoteData.version || 1;
                 if (localCapsule && remoteVer < localVersion) {
                   console.warn(`[VoidVault Security] ROLLBACK DEFENSE: Server has stale version ${remoteVer} < local version ${localVersion}. Rejecting server state.`);
                   // Heal server by re-pushing local state
-                  pushToServer(localCapsule, localVersion, credentialId).catch(() => {});
+                  pushToServer(localCapsule, localVersion, activeSigningKey.locator).catch(() => {});
                 } else if (remoteVer > localVersion || !localCapsule) {
                   console.log(`[VoidVault Sync] Server candidate is newer (${remoteVer} > ${localVersion}). Validating remote capsule.`);
                   candidateCapsule = remoteData.capsule;
@@ -396,17 +421,18 @@
                   activeVmkBytes = VoidVaultCrypto.generateVmkBytes();
                   activeVmkKey = await VoidVaultCrypto.importVmk(activeVmkBytes);
                   const wrapped = await VoidVaultCrypto.wrapVmk(activeVmkBytes, activeAesKey);
-                  const loc = await getLocator(credentialId);
+                  const loc = activeSigningKey.locator;
                   activeKeySlotId = 'key-primary';
                   capsuleKeySlots = [{
                     id: activeKeySlotId,
                     name: 'Primary Security Key',
                     credentialId: credentialId || 'primary',
                     locator: loc,
+                    publicKey: activeSigningKey.publicKeyHex,
                     enrolledAt: new Date().toISOString(),
                     wrappedVmk: wrapped
                   }];
-                  await saveAndSyncVault(credentialId);
+                  await saveAndSyncVault();
                 } else {
                   activeVmkBytes = decrypted.rawVmk;
                   activeVmkKey = decrypted.vmkKey;
@@ -414,6 +440,15 @@
                   capsuleKeySlots = decrypted.keySlots;
                   inMemoryVault = decrypted.entries;
                   syncVersion = candidateVersion;
+
+                  // Backfill self-certifying publicKey for current slot if missing
+                  const currentSlot = capsuleKeySlots.find(s => s.id === activeKeySlotId);
+                  if (currentSlot && (!currentSlot.publicKey || currentSlot.publicKey !== activeSigningKey.publicKeyHex)) {
+                    currentSlot.publicKey = activeSigningKey.publicKeyHex;
+                    currentSlot.locator = activeSigningKey.locator;
+                    await saveAndSyncVault();
+                  }
+
                   if (usingRemote) {
                     await extAPI.storage.local.set({
                       encryptedCapsule: candidateCapsule,
@@ -445,17 +480,18 @@
               activeVmkBytes = VoidVaultCrypto.generateVmkBytes();
               activeVmkKey = await VoidVaultCrypto.importVmk(activeVmkBytes);
               const wrapped = await VoidVaultCrypto.wrapVmk(activeVmkBytes, activeAesKey);
-              const loc = await getLocator(credentialId);
+              const loc = activeSigningKey.locator;
               activeKeySlotId = 'key-' + Date.now();
               capsuleKeySlots = [{
                 id: activeKeySlotId,
                 name: 'Primary Security Key',
                 credentialId: credentialId || 'primary',
                 locator: loc,
+                publicKey: activeSigningKey.publicKeyHex,
                 enrolledAt: new Date().toISOString(),
                 wrappedVmk: wrapped
               }];
-              await saveAndSyncVault(credentialId);
+              await saveAndSyncVault();
             }
 
             isUnlocked = true;
@@ -483,7 +519,7 @@
           }
 
           case 'ADD_BACKUP_KEY': {
-            if (!isUnlocked || !activeVmkBytes) {
+            if (!isUnlocked || !activeVmkBytes || !activeSigningKey) {
               throw new Error('Vault must be unlocked to enroll a backup security key');
             }
             resetAutoLockTimer();
@@ -492,12 +528,21 @@
               throw new Error('Invalid PRF output from backup security key');
             }
 
-            const backupPrfAesKey = await VoidVaultCrypto.deriveAesGcmKeyFromPrf(new Uint8Array(prfOutput));
-            const backupLocator = await getLocator(credentialId);
+            const backupPrfBytes = new Uint8Array(prfOutput);
+            const backupPrfAesKey = await VoidVaultCrypto.deriveAesGcmKeyFromPrf(backupPrfBytes);
+            const backupSigningKey = await VoidVaultCrypto.deriveSigningKeypairFromPrf(backupPrfBytes);
+            const backupLocator = backupSigningKey.locator;
 
             if (capsuleKeySlots.some(s => s.locator === backupLocator || (credentialId && s.credentialId === credentialId))) {
               throw new Error('This security key is already enrolled in this vault.');
             }
+
+            const primaryLocator = capsuleKeySlots.length > 0 ? capsuleKeySlots[0].locator : activeSigningKey.locator;
+            const aliasSig = await VoidVaultCrypto.signAliasAuthorization(
+              backupSigningKey.privateKey,
+              backupLocator,
+              primaryLocator
+            );
 
             const wrappedVmk = await VoidVaultCrypto.wrapVmk(activeVmkBytes, backupPrfAesKey);
             const newSlot = {
@@ -505,6 +550,8 @@
               name: (name || 'Backup Security Key').trim(),
               credentialId: credentialId || ('key-' + Date.now()),
               locator: backupLocator,
+              publicKey: backupSigningKey.publicKeyHex,
+              aliasSignature: aliasSig,
               enrolledAt: new Date().toISOString(),
               wrappedVmk: wrappedVmk
             };

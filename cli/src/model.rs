@@ -37,6 +37,10 @@ pub struct KeySlot {
     pub id: String,
     pub name: String,
     pub locator: String,
+    #[serde(rename = "publicKey", default)]
+    pub public_key: Option<String>,
+    #[serde(rename = "aliasSignature", default)]
+    pub alias_signature: Option<String>,
     #[serde(rename = "wrappedVmk")]
     pub wrapped_vmk: WrappedVmk,
     #[serde(rename = "enrolledAt")]
@@ -77,4 +81,6 @@ pub struct ServerVaultResponse {
 pub struct ServerVaultPushPayload {
     pub version: i64,
     pub capsule: VaultCapsule,
+    pub public_key: String,
+    pub signature: String,
 }

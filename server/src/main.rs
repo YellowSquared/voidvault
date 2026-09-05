@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use ed25519_dalek::{Signature, VerifyingKey};
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -67,6 +68,10 @@ struct AppState {
 struct VaultPayload {
     version: i64,
     capsule: Value,
+    #[serde(default)]
+    public_key: Option<String>,
+    #[serde(default)]
+    signature: Option<String>,
 }
 
 #[tokio::main]
@@ -105,6 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             locator TEXT PRIMARY KEY,
             version INTEGER NOT NULL,
             capsule TEXT NOT NULL,
+            public_key TEXT,
             updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS vault_locators (
@@ -115,6 +121,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .execute(&pool)
     .await?;
+
+    let _ = sqlx::query("ALTER TABLE vaults ADD COLUMN public_key TEXT;")
+        .execute(&pool)
+        .await;
 
     let limiter = RateLimiter::new(max_creations, Duration::from_secs(window_secs));
     info!(
@@ -262,11 +272,71 @@ fn extract_all_locators(payload: &VaultPayload, primary_locator: &str) -> Vec<St
     let mut locators = vec![primary_locator.to_string()];
     if let Some(key_slots) = payload.capsule.get("keySlots").and_then(|v| v.as_array()) {
         for slot in key_slots {
-            if let Some(loc) = slot.get("locator").and_then(|l| l.as_str()) {
-                let clean = loc.trim().to_string();
-                if !clean.is_empty() && !locators.contains(&clean) {
-                    locators.push(clean);
+            let loc = match slot.get("locator").and_then(|l| l.as_str()) {
+                Some(l) => l.trim(),
+                None => continue,
+            };
+            if loc.is_empty() || loc == primary_locator || locators.iter().any(|existing| existing == loc) {
+                continue;
+            }
+
+            // Verify per-slot cryptographic authorization
+            let slot_pk_hex = match slot.get("publicKey").and_then(|p| p.as_str()) {
+                Some(p) => p.trim(),
+                None => {
+                    warn!(locator = %loc, "Skipping keySlot alias: missing publicKey");
+                    continue;
                 }
+            };
+            let slot_sig_hex = match slot.get("aliasSignature").and_then(|s| s.as_str()) {
+                Some(s) => s.trim(),
+                None => {
+                    warn!(locator = %loc, "Skipping keySlot alias: missing aliasSignature");
+                    continue;
+                }
+            };
+
+            // 1. Verify self-certification: SHA256(publicKey) == slot.locator
+            let pk_bytes = match hex::decode(slot_pk_hex) {
+                Ok(b) if b.len() == 32 => {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&b);
+                    arr
+                }
+                _ => {
+                    warn!(locator = %loc, "Skipping keySlot alias: invalid publicKey hex");
+                    continue;
+                }
+            };
+            if hex::encode(Sha256::digest(&pk_bytes)) != loc {
+                warn!(locator = %loc, "Skipping keySlot alias: publicKey hash commitment mismatch");
+                continue;
+            }
+
+            // 2. Verify authorization signature: Ed25519.verify(pk, "voidvault-alias-authorization-v1:<loc>:<primary_locator>", sig)
+            let sig_bytes = match hex::decode(slot_sig_hex) {
+                Ok(b) if b.len() == 64 => {
+                    let mut arr = [0u8; 64];
+                    arr.copy_from_slice(&b);
+                    arr
+                }
+                _ => {
+                    warn!(locator = %loc, "Skipping keySlot alias: invalid aliasSignature hex");
+                    continue;
+                }
+            };
+
+            let vk = match VerifyingKey::from_bytes(&pk_bytes) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let sig = Signature::from_bytes(&sig_bytes);
+            let auth_msg = format!("voidvault-alias-authorization-v1:{}:{}", loc, primary_locator);
+            if vk.verify_strict(auth_msg.as_bytes(), &sig).is_ok() {
+                info!(alias_locator = %loc, canonical = %primary_locator, "Verified cryptographic keySlot alias authorization");
+                locators.push(loc.to_string());
+            } else {
+                warn!(alias_locator = %loc, "Cryptographic keySlot alias signature rejected");
             }
         }
     }
@@ -282,7 +352,93 @@ async fn save_vault(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let client_ip = extract_client_ip(&headers, addr.ip());
 
-    // 1. Resolve canonical locator if this is an existing alias
+    // 1. Validate self-certifying public key and signature
+    let pk_hex = match &payload.public_key {
+        Some(pk) if !pk.trim().is_empty() => pk.trim(),
+        _ => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "Self-certifying public_key is required for vault writes" })),
+            ));
+        }
+    };
+
+    let sig_hex = match &payload.signature {
+        Some(s) if !s.trim().is_empty() => s.trim(),
+        _ => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": "Cryptographic signature is required for vault writes" })),
+            ));
+        }
+    };
+
+    let pk_bytes = match hex::decode(pk_hex) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Invalid public_key: must be 32 bytes hex" })),
+            ));
+        }
+    };
+
+    // Self-certification check: SHA256(publicKey) == locator
+    let computed_locator = hex::encode(Sha256::digest(&pk_bytes));
+    if computed_locator != locator {
+        warn!(locator = %locator, computed = %computed_locator, "Self-certifying public key hash commitment mismatch");
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "Public key does not match locator hash commitment" })),
+        ));
+    }
+
+    // 2. Verify Ed25519 signature over (locator || version (8 bytes LE) || sha256(capsule))
+    let capsule_str = payload.capsule.to_string();
+    let mut hasher = Sha256::new();
+    hasher.update(capsule_str.as_bytes());
+    let capsule_sha = hasher.finalize();
+
+    let mut msg = Vec::with_capacity(locator.len() + 8 + 32);
+    msg.extend_from_slice(locator.as_bytes());
+    msg.extend_from_slice(&payload.version.to_le_bytes());
+    msg.extend_from_slice(&capsule_sha);
+
+    let sig_bytes = match hex::decode(sig_hex) {
+        Ok(b) if b.len() == 64 => {
+            let mut arr = [0u8; 64];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Invalid signature: must be 64 bytes hex" })),
+            ));
+        }
+    };
+
+    let vk = VerifyingKey::from_bytes(&pk_bytes).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Invalid Ed25519 public key: {}", e) })),
+        )
+    })?;
+    let sig = Signature::from_bytes(&sig_bytes);
+
+    if let Err(e) = vk.verify_strict(&msg, &sig) {
+        warn!(locator = %locator, error = %e, "Invalid Ed25519 write signature");
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "Invalid cryptographic signature for vault write" })),
+        ));
+    }
+
+    // 3. Resolve canonical locator if this is an existing alias
     let existing_canonical: Option<String> =
         sqlx::query_scalar("SELECT canonical_locator FROM vault_locators WHERE locator = ?")
             .bind(&locator)
@@ -292,9 +448,9 @@ async fn save_vault(
 
     let canonical_locator = existing_canonical.unwrap_or_else(|| locator.clone());
 
-    // 2. Check if canonical vault already exists and get current version
-    let current_version: Option<i64> =
-        sqlx::query_scalar("SELECT version FROM vaults WHERE locator = ?")
+    // 4. Check if canonical vault already exists
+    let existing_row: Option<(i64, Option<String>)> =
+        sqlx::query_as("SELECT version, public_key FROM vaults WHERE locator = ?")
             .bind(&canonical_locator)
             .fetch_optional(&state.db)
             .await
@@ -305,10 +461,25 @@ async fn save_vault(
                 )
             })?;
 
-    let exists = current_version.is_some();
+    let exists = existing_row.is_some();
 
-    // 2b. Anti-Rollback Defense: Reject state regressions
-    if let Some(curr_ver) = current_version {
+    // 5. If vault exists, verify public_key immutability and anti-rollback version check
+    if let Some((curr_ver, stored_pk_opt)) = existing_row {
+        if canonical_locator == locator {
+            if let Some(stored_pk) = stored_pk_opt {
+                if stored_pk != pk_hex {
+                    warn!(
+                        canonical = %canonical_locator,
+                        "Public key mismatch for existing canonical vault"
+                    );
+                    return Err((
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({ "error": "Public key does not match existing vault key" })),
+                    ));
+                }
+            }
+        }
+
         if payload.version < curr_ver {
             warn!(
                 canonical_locator = %canonical_locator,
@@ -327,7 +498,7 @@ async fn save_vault(
         }
     }
 
-    // 3. If this is a BRAND NEW vault creation, enforce IP rate limit
+    // 6. If this is a BRAND NEW vault creation, enforce IP rate limit
     if !exists {
         if let Err(retry_after) = state.limiter.check_and_record(client_ip) {
             warn!(
@@ -347,23 +518,24 @@ async fn save_vault(
         info!(client_ip = %client_ip, locator = %canonical_locator, "Authorized new vault creation slot");
     }
 
-    let capsule_str = payload.capsule.to_string();
     let now = chrono_or_now();
 
-    // 4. Upsert canonical vault entry
+    // 7. Upsert canonical vault entry
     sqlx::query(
         r#"
-        INSERT INTO vaults (locator, version, capsule, updated_at)
-        VALUES (?1, ?2, ?3, ?4)
+        INSERT INTO vaults (locator, version, capsule, public_key, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5)
         ON CONFLICT(locator) DO UPDATE SET
             version = excluded.version,
             capsule = excluded.capsule,
+            public_key = COALESCE(vaults.public_key, excluded.public_key),
             updated_at = excluded.updated_at
         "#,
     )
     .bind(&canonical_locator)
     .bind(payload.version)
     .bind(&capsule_str)
+    .bind(pk_hex)
     .bind(&now)
     .execute(&state.db)
     .await
@@ -374,7 +546,7 @@ async fn save_vault(
         )
     })?;
 
-    // 5. Update multi-locator links
+    // 8. Update multi-locator links with cryptographic authorization
     let all_locators = extract_all_locators(&payload, &canonical_locator);
     let _ = sqlx::query("DELETE FROM vault_locators WHERE canonical_locator = ?")
         .bind(&canonical_locator)
@@ -391,9 +563,7 @@ async fn save_vault(
         .await;
     }
 
-    let mut hasher = Sha256::new();
-    hasher.update(capsule_str.as_bytes());
-    let capsule_sha256 = format!("{:x}", hasher.finalize());
+    let capsule_sha256 = format!("{:x}", capsule_sha);
 
     info!(
         canonical_locator = %canonical_locator,
@@ -401,15 +571,16 @@ async fn save_vault(
         version = payload.version,
         sha256 = %capsule_sha256,
         is_new = !exists,
-        "Vault capsule persisted with multi-key locators"
+        "Vault capsule signed and persisted with cryptographic self-certification"
     );
 
     Ok(Json(json!({
-        "status": "ok",
+        "status": "success",
         "locator": canonical_locator,
         "version": payload.version,
         "capsule_sha256": capsule_sha256,
-        "enrolled_locators": all_locators.len()
+        "total_locators": all_locators.len(),
+        "is_new": !exists
     })))
 }
 

@@ -8,6 +8,10 @@ const VoidVaultCrypto = (function () {
 
   const DEFAULT_HKDF_SALT = new TextEncoder().encode('voidvault-prf-hkdf-salt-v2');
   const HKDF_INFO = new TextEncoder().encode('voidvault-aes256-gcm-key-v2');
+  const ED25519_HKDF_INFO = new TextEncoder().encode('voidvault-ed25519-seed-v1');
+  const PKCS8_ED25519_PREFIX = new Uint8Array([
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20
+  ]);
 
   function bufferToBase64(buffer) {
     const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
@@ -323,6 +327,114 @@ const VoidVaultCrypto = (function () {
     return new Uint8Array(bits);
   }
 
+  async function deriveSigningKeypairFromPrf(prfBytes) {
+    if (!prfBytes || prfBytes.length !== 32) {
+      throw new Error('PRF secret must be exactly 32 bytes');
+    }
+
+    const prfKeyMaterial = await crypto.subtle.importKey(
+      'raw',
+      prfBytes,
+      { name: 'HKDF' },
+      false,
+      ['deriveBits']
+    );
+
+    const seedBits = await crypto.subtle.deriveBits(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: DEFAULT_HKDF_SALT,
+        info: ED25519_HKDF_INFO
+      },
+      prfKeyMaterial,
+      256
+    );
+    const seedBytes = new Uint8Array(seedBits);
+
+    const pkcs8 = new Uint8Array(PKCS8_ED25519_PREFIX.length + seedBytes.length);
+    pkcs8.set(PKCS8_ED25519_PREFIX);
+    pkcs8.set(seedBytes, PKCS8_ED25519_PREFIX.length);
+
+    const privateKey = await crypto.subtle.importKey(
+      'pkcs8',
+      pkcs8,
+      { name: 'Ed25519' },
+      true,
+      ['sign']
+    );
+
+    const jwk = await crypto.subtle.exportKey('jwk', privateKey);
+    const publicKeyBytes = base64UrlToBuffer(jwk.x);
+    const publicKeyHex = bufferToHex(publicKeyBytes);
+
+    const hashBuf = await crypto.subtle.digest('SHA-256', publicKeyBytes);
+    const locator = bufferToHex(hashBuf);
+
+    return {
+      privateKey,
+      publicKeyBytes,
+      publicKeyHex,
+      locator
+    };
+  }
+
+  function canonicalizeJson(obj) {
+    if (obj === null || typeof obj !== 'object') {
+      return JSON.stringify(obj);
+    }
+    if (Array.isArray(obj)) {
+      return '[' + obj.map(canonicalizeJson).join(',') + ']';
+    }
+    const sortedKeys = Object.keys(obj).sort();
+    return '{' + sortedKeys.map(k => JSON.stringify(k) + ':' + canonicalizeJson(obj[k])).join(',') + '}';
+  }
+
+  async function signVaultWrite(privateKey, locator, version, capsuleObj) {
+    const locatorBytes = new TextEncoder().encode(locator);
+
+    const versionBuf = new ArrayBuffer(8);
+    const view = new DataView(versionBuf);
+    view.setBigInt64(0, BigInt(version), true); // true = Little Endian
+    const versionBytes = new Uint8Array(versionBuf);
+
+    let capsuleStr;
+    if (typeof capsuleObj === 'string') {
+      try {
+        capsuleStr = canonicalizeJson(JSON.parse(capsuleObj));
+      } catch {
+        capsuleStr = capsuleObj;
+      }
+    } else {
+      capsuleStr = canonicalizeJson(capsuleObj);
+    }
+    const capsuleBytes = new TextEncoder().encode(capsuleStr);
+    const capsuleSha256 = new Uint8Array(await crypto.subtle.digest('SHA-256', capsuleBytes));
+
+    const message = new Uint8Array(locatorBytes.length + 8 + 32);
+    message.set(locatorBytes, 0);
+    message.set(versionBytes, locatorBytes.length);
+    message.set(capsuleSha256, locatorBytes.length + 8);
+
+    const signatureBuf = await crypto.subtle.sign(
+      { name: 'Ed25519' },
+      privateKey,
+      message
+    );
+    return bufferToHex(new Uint8Array(signatureBuf));
+  }
+
+  async function signAliasAuthorization(privateKey, slotLocator, canonicalLocator) {
+    const authString = `voidvault-alias-authorization-v1:${slotLocator}:${canonicalLocator}`;
+    const message = new TextEncoder().encode(authString);
+    const signatureBuf = await crypto.subtle.sign(
+      { name: 'Ed25519' },
+      privateKey,
+      message
+    );
+    return bufferToHex(new Uint8Array(signatureBuf));
+  }
+
   return {
     bufferToBase64,
     base64ToBuffer,
@@ -330,7 +442,11 @@ const VoidVaultCrypto = (function () {
     base64UrlToBuffer,
     bufferToHex,
     zeroBuffer,
+    canonicalizeJson,
     deriveAesGcmKeyFromPrf,
+    deriveSigningKeypairFromPrf,
+    signVaultWrite,
+    signAliasAuthorization,
     encryptVaultBlob,
     decryptVaultBlob,
     generateVmkBytes,
