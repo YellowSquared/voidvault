@@ -1,0 +1,32 @@
+[package]
+name = "voidvault"
+version = "0.2.0"
+edition = "2021"
+description = "Zero-knowledge FIDO2 hardware attestation password vault CLI"
+repository = "https://github.com/YellowSquared/voidvault"
+license = "MIT"
+readme = "../README.md"
+
+[[bin]]
+name = "voidvault"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+pbkdf2 = "0.12"
+hmac = "0.12"
+base64 = "0.22"
+zeroize = { version = "1.8", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
+rpassword = "7.3"
+dirs = "5.0"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+hex = "0.4"
+tabwriter = "1.4"
