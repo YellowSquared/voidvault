@@ -4,7 +4,7 @@ mod crypto;
 mod model;
 
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand, ValueEnum};
 use tabwriter::TabWriter;
@@ -99,8 +99,8 @@ enum Commands {
         #[arg(short, long)]
         username: Option<String>,
 
-        /// Password (prompted securely if omitted unless --gen-pass is set)
-        #[arg(short, long)]
+        /// Forbidden: passing passwords via CLI flag is blocked to prevent shell history leaks
+        #[arg(short, long, hide = true)]
         password: Option<String>,
 
         /// Automatically generate a random password
@@ -512,22 +512,56 @@ async fn cmd_add(
     key_arg: Option<&str>,
     quiet: bool,
 ) -> Result<(), String> {
+    if password_opt.is_some() {
+        return Err(
+            "Security Guard: Passing passwords via CLI flags is disabled to prevent credential leakage to shell history (~/.bash_history) and process listings (ps aux).\nRun without '-p' to enter the password manually via secure prompt, or use '-g' to auto-generate."
+                .to_string(),
+        );
+    }
+
     let mut capsule = load_capsule_from_disk(path)?;
     let prf_secret = resolve_prf_key(dev_mode, key_arg);
     let (vmk, mut entries) = unlock_capsule(&capsule, &prf_secret)?;
 
     let pass = if gen_pass {
-        generate_secure_password(length, no_symbols)
-    } else if let Some(p) = password_opt {
-        p
-    } else {
+        let generated = generate_secure_password(length, no_symbols);
+        if !quiet {
+            eprintln!("[✓] Generated secure password: {}", generated);
+        }
+        generated
+    } else if io::stdin().is_terminal() {
         eprint!("Enter password (leave empty to generate): ");
         let _ = io::stderr().flush();
         let input = rpassword::read_password().map_err(|e| e.to_string())?;
         if input.trim().is_empty() {
-            generate_secure_password(length, no_symbols)
+            let generated = generate_secure_password(length, no_symbols);
+            if !quiet {
+                eprintln!("[✓] Generated secure password: {}", generated);
+            }
+            generated
         } else {
+            eprint!("Confirm password: ");
+            let _ = io::stderr().flush();
+            let confirm = rpassword::read_password().map_err(|e| e.to_string())?;
+            if input != confirm {
+                return Err("Error: Passwords do not match.".to_string());
+            }
             input
+        }
+    } else {
+        let mut line = String::new();
+        io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| format!("Failed to read password from stdin: {}", e))?;
+        let trimmed = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+        if trimmed.is_empty() {
+            let generated = generate_secure_password(length, no_symbols);
+            if !quiet {
+                eprintln!("[✓] Generated secure password: {}", generated);
+            }
+            generated
+        } else {
+            trimmed
         }
     };
 
