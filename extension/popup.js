@@ -16,10 +16,17 @@
   const btnEnrollKey = document.getElementById('btn-enroll-key');
   const btnReset = document.getElementById('btn-reset');
   const btnLock = document.getElementById('btn-lock');
+  const btnBackup = document.getElementById('btn-backup');
   const statusDot = document.getElementById('status-dot');
   const statusLabel = document.getElementById('status-label');
   const errorBox = document.getElementById('error-box');
   const toast = document.getElementById('toast');
+
+  // Backup Modal
+  const modalBackup = document.getElementById('modal-backup');
+  const btnCloseBackup = document.getElementById('btn-close-backup');
+  const btnExportEncrypted = document.getElementById('btn-export-encrypted');
+  const btnExportPass = document.getElementById('btn-export-pass');
 
   // Secrets List & Search
   const searchInput = document.getElementById('search-input');
@@ -94,7 +101,9 @@
     viewLocked.classList.remove('hidden');
     viewUnlocked.classList.add('hidden');
     btnLock.classList.add('hidden');
+    btnBackup.classList.add('hidden');
     modalSecret.classList.add('hidden');
+    modalBackup.classList.add('hidden');
     errorBox.classList.add('hidden');
   }
 
@@ -102,6 +111,7 @@
     viewLocked.classList.add('hidden');
     viewUnlocked.classList.remove('hidden');
     btnLock.classList.remove('hidden');
+    btnBackup.classList.remove('hidden');
     errorBox.classList.add('hidden');
   }
 
@@ -434,6 +444,204 @@
         showError(err.message || 'Failed to save secret');
       }
     });
+
+    // 8. Backup & Export Listeners
+    btnBackup.addEventListener('click', () => {
+      modalBackup.classList.remove('hidden');
+    });
+
+    btnCloseBackup.addEventListener('click', () => {
+      modalBackup.classList.add('hidden');
+    });
+
+    btnExportEncrypted.addEventListener('click', exportEncryptedBackup);
+    btnExportPass.addEventListener('click', exportPassZip);
+  }
+
+  function triggerDownload(filename, data, mimeType = 'application/octet-stream') {
+    const blob = data instanceof Blob ? data : new Blob([data], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function exportEncryptedBackup() {
+    try {
+      const stored = await extAPI.storage.local.get(['encryptedCapsule', 'syncVersion', 'credentialId']);
+      if (!stored.encryptedCapsule) {
+        showError('No encrypted capsule found to export.');
+        return;
+      }
+      const backupObj = {
+        format: 'voidvault-capsule-v2',
+        exportedAt: new Date().toISOString(),
+        version: stored.syncVersion || 1,
+        capsule: stored.encryptedCapsule
+      };
+      const jsonStr = JSON.stringify(backupObj, null, 2);
+      const today = new Date().toISOString().split('T')[0];
+      triggerDownload(`voidvault-backup-${today}.voidvault`, jsonStr, 'application/json');
+      modalBackup.classList.add('hidden');
+      showToast('🔒 Encrypted backup saved (Zero metadata leaked)');
+    } catch (err) {
+      showError('Backup failed: ' + (err.message || 'unknown error'));
+    }
+  }
+
+  async function exportPassZip() {
+    const confirmed = confirm(
+      "SECURITY WARNING (METADATA DISCLOSURE):\n\n" +
+      "Standard Unix 'pass' stores directory names and website domains in cleartext on disk (e.g. ~/.password-store/github.com/alice.txt).\n\n" +
+      "While the passwords inside the files are protected, your filenames, bank domains, and healthcare services will be visible to your filesystem and disk journals.\n\n" +
+      "For zero-leakage, the encrypted .voidvault backup is recommended.\n\n" +
+      "Do you want to proceed with the standard Unix pass export anyway?"
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await extAPI.runtime.sendMessage({ action: 'GET_ENTRIES' });
+      const entries = res?.entries || [];
+      if (entries.length === 0) {
+        showError('Vault is empty. Nothing to export.');
+        return;
+      }
+
+      const files = [];
+      entries.forEach(e => {
+        const domain = (e.domain || 'general').replace(/[^a-zA-Z0-9.-]/g, '_').toLowerCase();
+        const user = (e.username || e.title || 'secret').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const filename = `${domain}/${user}.txt`;
+
+        let content = `${e.password || ''}\n`;
+        if (e.username) content += `username: ${e.username}\n`;
+        if (e.domain) content += `url: ${e.domain}\n`;
+        if (e.title) content += `title: ${e.title}\n`;
+        if (e.notes) content += `${e.notes}\n`;
+
+        files.push({ path: filename, content });
+      });
+
+      const zipBytes = createZipArchive(files);
+      const today = new Date().toISOString().split('T')[0];
+      triggerDownload(`voidvault-pass-export-${today}.zip`, zipBytes, 'application/zip');
+      modalBackup.classList.add('hidden');
+      showToast('📁 Unix pass archive exported');
+    } catch (err) {
+      showError('pass export failed: ' + (err.message || 'unknown error'));
+    }
+  }
+
+  function createZipArchive(files) {
+    const encoder = new TextEncoder();
+    const fileEntries = [];
+    let offset = 0;
+
+    const crcTable = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      crcTable[i] = c;
+    }
+    function calcCrc(bytes) {
+      let crc = 0xffffffff;
+      for (let i = 0; i < bytes.length; i++) {
+        crc = crcTable[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+      }
+      return (crc ^ 0xffffffff) >>> 0;
+    }
+
+    const parts = [];
+
+    for (const f of files) {
+      const pathBytes = encoder.encode(f.path);
+      const dataBytes = encoder.encode(f.content);
+      const crc = calcCrc(dataBytes);
+      const size = dataBytes.length;
+
+      const header = new Uint8Array(30);
+      const view = new DataView(header.buffer);
+      view.setUint32(0, 0x04034b50, true);
+      view.setUint16(4, 20, true);
+      view.setUint16(6, 0x0800, true);
+      view.setUint16(8, 0, true);
+      view.setUint16(10, 0, true);
+      view.setUint16(12, 0, true);
+      view.setUint32(14, crc, true);
+      view.setUint32(18, size, true);
+      view.setUint32(22, size, true);
+      view.setUint16(26, pathBytes.length, true);
+      view.setUint16(28, 0, true);
+
+      parts.push(header, pathBytes, dataBytes);
+
+      fileEntries.push({
+        pathBytes,
+        crc,
+        size,
+        offset
+      });
+
+      offset += header.length + pathBytes.length + dataBytes.length;
+    }
+
+    const cdStartOffset = offset;
+    let cdSize = 0;
+
+    for (const e of fileEntries) {
+      const cdHeader = new Uint8Array(46);
+      const view = new DataView(cdHeader.buffer);
+      view.setUint32(0, 0x02014b50, true);
+      view.setUint16(4, 20, true);
+      view.setUint16(6, 20, true);
+      view.setUint16(8, 0x0800, true);
+      view.setUint16(10, 0, true);
+      view.setUint16(12, 0, true);
+      view.setUint16(14, 0, true);
+      view.setUint32(16, e.crc, true);
+      view.setUint32(20, e.size, true);
+      view.setUint32(24, e.size, true);
+      view.setUint16(28, e.pathBytes.length, true);
+      view.setUint16(30, 0, true);
+      view.setUint16(32, 0, true);
+      view.setUint16(34, 0, true);
+      view.setUint16(36, 0, true);
+      view.setUint32(38, 0, true);
+      view.setUint32(42, e.offset, true);
+
+      parts.push(cdHeader, e.pathBytes);
+      const entryCdLength = cdHeader.length + e.pathBytes.length;
+      cdSize += entryCdLength;
+      offset += entryCdLength;
+    }
+
+    const eocd = new Uint8Array(22);
+    const eocdView = new DataView(eocd.buffer);
+    eocdView.setUint32(0, 0x06054b50, true);
+    eocdView.setUint16(4, 0, true);
+    eocdView.setUint16(6, 0, true);
+    eocdView.setUint16(8, fileEntries.length, true);
+    eocdView.setUint16(10, fileEntries.length, true);
+    eocdView.setUint32(12, cdSize, true);
+    eocdView.setUint32(16, cdStartOffset, true);
+    eocdView.setUint16(20, 0, true);
+
+    parts.push(eocd);
+
+    const totalLength = parts.reduce((acc, p) => acc + p.length, 0);
+    const result = new Uint8Array(totalLength);
+    let pos = 0;
+    for (const p of parts) {
+      result.set(p, pos);
+      pos += p.length;
+    }
+    return result;
   }
 
   document.addEventListener('DOMContentLoaded', init);
