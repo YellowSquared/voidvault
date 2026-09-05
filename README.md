@@ -112,7 +112,36 @@ voidvault/
 docker compose up -d
 ```
 
-### Option C: Native Cargo Build
+### Option C: Debian / Ubuntu Package (.deb)
+
+Download the `.deb` package from GitHub Releases or compile locally:
+```bash
+sudo apt install ./voidvault-server_0.2.0-1_amd64.deb
+sudo systemctl enable --now voidvault-server
+```
+Includes auto-configured unprivileged system user `voidvault`, hardened systemd unit, and config at `/etc/voidvault/voidvault.conf`.
+
+### Option D: Nix / NixOS Flake
+
+Run directly on any Nix system without cloning:
+```bash
+nix run github:YellowSquared/voidvault
+```
+
+Or enable the native NixOS daemon module in `configuration.nix`:
+```nix
+{ inputs, ... }: {
+  imports = [ inputs.voidvault.nixosModules.default ];
+
+  services.voidvault = {
+    enable = true;
+    port = 8080;
+    bindAddr = "0.0.0.0";
+  };
+}
+```
+
+### Option E: Native Cargo Build
 
 Prerequisites: Rust (1.80+)
 
