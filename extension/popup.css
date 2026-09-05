@@ -481,6 +481,104 @@ body {
   font-size: 10px;
 }
 
+/* Settings Modal & Presets */
+.btn-icon {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  padding: 4px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  line-height: 1;
+  transition: background-color 0.15s;
+}
+
+.btn-icon:hover {
+  background: var(--bg-subtle);
+  border-color: var(--black);
+}
+
+.status-indicator {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.status-indicator:hover {
+  background: var(--bg-subtle);
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: -4px;
+}
+
+.preset-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.btn-chip {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  color: var(--black);
+  padding: 3px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-chip:hover {
+  background: #000000;
+  color: #ffffff;
+  border-color: #000000;
+}
+
+.connection-feedback {
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.connection-feedback.success {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.connection-feedback.error {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.connection-feedback.info {
+  background: #f0f9ff;
+  color: #075985;
+  border: 1px solid #bae6fd;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .hidden {
   display: none !important;
 }

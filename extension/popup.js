@@ -28,6 +28,18 @@
   const btnExportEncrypted = document.getElementById('btn-export-encrypted');
   const btnExportPass = document.getElementById('btn-export-pass');
 
+  // Settings Modal
+  const serverStatusBox = document.getElementById('server-status');
+  const btnSettings = document.getElementById('btn-settings');
+  const modalSettings = document.getElementById('modal-settings');
+  const btnCloseSettings = document.getElementById('btn-close-settings');
+  const inputServerUrl = document.getElementById('input-server-url');
+  const btnPresetLocalhost = document.getElementById('btn-preset-localhost');
+  const btnPresetVm = document.getElementById('btn-preset-vm');
+  const btnTestServer = document.getElementById('btn-test-server');
+  const btnSaveSettings = document.getElementById('btn-save-settings');
+  const testConnectionStatus = document.getElementById('test-connection-status');
+
   // Secrets List & Search
   const searchInput = document.getElementById('search-input');
   const secretsList = document.getElementById('secrets-list');
@@ -104,6 +116,7 @@
     btnBackup.classList.add('hidden');
     modalSecret.classList.add('hidden');
     modalBackup.classList.add('hidden');
+    modalSettings.classList.add('hidden');
     errorBox.classList.add('hidden');
   }
 
@@ -456,6 +469,71 @@
 
     btnExportEncrypted.addEventListener('click', exportEncryptedBackup);
     btnExportPass.addEventListener('click', exportPassZip);
+
+    // 9. Server Settings Listeners
+    const openSettings = async () => {
+      try {
+        const res = await extAPI.runtime.sendMessage({ action: 'GET_CONFIG' });
+        inputServerUrl.value = res?.serverUrl || 'http://localhost:8080';
+        testConnectionStatus.classList.add('hidden');
+        testConnectionStatus.textContent = '';
+        modalSettings.classList.remove('hidden');
+      } catch (err) {
+        showError('Could not load settings: ' + err.message);
+      }
+    };
+
+    serverStatusBox.addEventListener('click', openSettings);
+    btnSettings.addEventListener('click', openSettings);
+
+    btnCloseSettings.addEventListener('click', () => {
+      modalSettings.classList.add('hidden');
+    });
+
+    btnPresetLocalhost.addEventListener('click', () => {
+      inputServerUrl.value = 'http://localhost:8080';
+    });
+
+    btnPresetVm.addEventListener('click', () => {
+      inputServerUrl.value = 'http://20.80.54.57:8080';
+    });
+
+    btnTestServer.addEventListener('click', async () => {
+      testConnectionStatus.className = 'connection-feedback info';
+      testConnectionStatus.textContent = 'Testing ping...';
+      testConnectionStatus.classList.remove('hidden');
+
+      try {
+        const res = await extAPI.runtime.sendMessage({
+          action: 'TEST_SERVER',
+          serverUrl: inputServerUrl.value
+        });
+        if (res && res.ok) {
+          testConnectionStatus.className = 'connection-feedback success';
+          testConnectionStatus.textContent = `✓ Server Online (${res.latency}ms)`;
+        } else {
+          testConnectionStatus.className = 'connection-feedback error';
+          testConnectionStatus.textContent = '✗ Connection failed or offline';
+        }
+      } catch (err) {
+        testConnectionStatus.className = 'connection-feedback error';
+        testConnectionStatus.textContent = `✗ Error: ${err.message}`;
+      }
+    });
+
+    btnSaveSettings.addEventListener('click', async () => {
+      try {
+        const res = await extAPI.runtime.sendMessage({
+          action: 'SET_CONFIG',
+          serverUrl: inputServerUrl.value
+        });
+        modalSettings.classList.add('hidden');
+        updateServerStatus(Boolean(res?.serverConnected));
+        showToast('⚙️ Server settings saved');
+      } catch (err) {
+        showError('Failed to save settings: ' + err.message);
+      }
+    });
   }
 
   function triggerDownload(filename, data, mimeType = 'application/octet-stream') {

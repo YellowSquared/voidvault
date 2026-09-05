@@ -7,8 +7,27 @@
   'use strict';
 
   const extAPI = typeof browser !== 'undefined' ? browser : chrome;
-  const SERVER_BASE = 'http://localhost:8080';
+  const DEFAULT_SERVER_BASE = 'http://localhost:8080';
   const AUTO_LOCK_MS = 15 * 60 * 1000; // 15 minutes
+
+  function normalizeUrl(url) {
+    if (!url) return DEFAULT_SERVER_BASE;
+    let clean = url.trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = 'http://' + clean;
+    }
+    return clean.replace(/\/+$/, '');
+  }
+
+  async function getServerBase() {
+    try {
+      const stored = await extAPI.storage.local.get(['serverUrl']);
+      if (stored && stored.serverUrl) {
+        return normalizeUrl(stored.serverUrl);
+      }
+    } catch {}
+    return DEFAULT_SERVER_BASE;
+  }
 
   let isUnlocked = false;
   let activeAesKey = null;
@@ -59,11 +78,12 @@
 
   async function pushToServer(encryptedCapsule, version, credentialId) {
     try {
+      const serverBase = await getServerBase();
       const locator = await getLocator(credentialId);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2500);
 
-      const res = await fetch(`${SERVER_BASE}/api/vault/${locator}`, {
+      const res = await fetch(`${serverBase}/api/vault/${locator}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -86,11 +106,12 @@
 
   async function pullFromServer(credentialId) {
     try {
+      const serverBase = await getServerBase();
       const locator = await getLocator(credentialId);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2500);
 
-      const res = await fetch(`${SERVER_BASE}/api/vault/${locator}`, {
+      const res = await fetch(`${serverBase}/api/vault/${locator}`, {
         method: 'GET',
         headers: { 'Accept': 'application/json' },
         signal: controller.signal
@@ -108,15 +129,23 @@
     return null;
   }
 
-  async function checkServerHealth() {
+  async function checkServerHealth(targetUrl = null) {
     try {
+      const serverBase = targetUrl ? normalizeUrl(targetUrl) : await getServerBase();
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 1500);
-      const res = await fetch(`${SERVER_BASE}/health`, { signal: controller.signal }).catch(() => null);
+      const res = await fetch(`${serverBase}/health`, { signal: controller.signal }).catch(() => null);
       clearTimeout(timeout);
-      serverConnected = Boolean(res && res.ok);
+      const ok = Boolean(res && res.ok);
+      if (!targetUrl) {
+        serverConnected = ok;
+      }
+      return ok;
     } catch {
-      serverConnected = false;
+      if (!targetUrl) {
+        serverConnected = false;
+      }
+      return false;
     }
   }
 
@@ -131,12 +160,35 @@
           case 'GET_STATUS': {
             resetAutoLockTimer();
             await checkServerHealth();
+            const serverBase = await getServerBase();
             return {
               isUnlocked,
               syncVersion,
               serverConnected,
+              serverUrl: serverBase,
               count: inMemoryVault ? inMemoryVault.length : 0
             };
+          }
+
+          case 'GET_CONFIG': {
+            const serverBase = await getServerBase();
+            return { serverUrl: serverBase, serverConnected };
+          }
+
+          case 'SET_CONFIG': {
+            const newUrl = normalizeUrl(message.serverUrl);
+            const isAlive = await checkServerHealth(newUrl);
+            await extAPI.storage.local.set({ serverUrl: newUrl });
+            serverConnected = isAlive;
+            return { success: true, serverUrl: newUrl, serverConnected: isAlive };
+          }
+
+          case 'TEST_SERVER': {
+            const testUrl = normalizeUrl(message.serverUrl);
+            const start = Date.now();
+            const isAlive = await checkServerHealth(testUrl);
+            const latency = Date.now() - start;
+            return { ok: isAlive, latency };
           }
 
           case 'UNLOCK_WITH_PRF': {
