@@ -1,19 +1,25 @@
 # VoidVault
 
-> ### 🛡️ Threat Model & Security Axioms:
-> **VoidVault assumes that the following are 100% fully compromised:**
-> - ❌ **The Server:** The hosting provider, database, and any sysadmin with full root access.
-> - ❌ **The Network:** The Wi-Fi router, the ISP, and state actors with rogue Root CA certs intercepting TLS.
+> ### 🛡️ Zero-Trust Baseline: Everything Outside Your PC is Hostile
+> **VoidVault assumes that everything except your local PC and hardware key is 100% compromised:**
+> - ❌ **The Server & Sysadmins:** The hosting provider, the SQLite database, seized cloud disks, and any rogue sysadmin with full root access.
+> - ❌ **The Network & Transit:** The Wi-Fi router, malicious public hotspots, upstream ISPs, and adversaries sniffing packets.
+> - ❌ **TLS & Certificate Authorities:** State actors or corporate proxies with installed Root CA certs on routers decrypting all HTTPS traffic.
+> - ❌ **The Public Internet & DNS:** BGP hijacks, spoofed DNS, poisoned routes, and reverse proxy front-ends.
+> - ❌ **The Database & Disk Backups:** Complete database dumps leaked on pastebin or subpoenaed by third parties.
+> - ❌ **The Websites You Visit:** In-page scripts and XSS vulnerabilities attempting to probe DOM inputs (defeated by zero ambient autofill).
+> - ❌ **Phishing Domains:** Fake clone sites trying to prompt for hardware touches (hardware-enforced `rpId` binding makes phished touches produce useless random bytes).
 > 
-> **What can an attacker with full root access and rogue CA certs do?**  
+> **What can an adversary with root on the server, rogue CA certs on the router, and a leaked database dump do?**  
 > **Literally nothing.** They get:
-> - **0** master passwords
-> - **0** cryptographic salts
-> - **0** encryption keys
-> - **0** usernames or emails
-> - **0** website domains or entry titles
+> - **0** master passwords (none exist)
+> - **0** cryptographic salts (none sent to server)
+> - **0** decryption keys (keys never leave your YubiKey silicon)
+> - **0** usernames or emails (server has no user records)
+> - **0** website domains or folder paths (everything is encrypted client-side)
+> - **0** entry counts or secret lengths (discrete bucket padding hides structure)
 > 
-> All they see is mathematically unbreakable noise. The server never even gets a salt or a password. It's all client-side. Decryption happens strictly in your browser using physical silicon inside your security key (YubiKey / WebAuthn PRF).
+> All they see is mathematically unbreakable noise. The server never even gets a salt or a password. It's all client-side. Decryption happens strictly inside your local browser using physical silicon inside your security key (YubiKey / WebAuthn PRF).
 
 ---
 
