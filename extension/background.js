@@ -29,6 +29,23 @@
     return DEFAULT_SERVER_BASE;
   }
 
+  let vaultMode = 'local'; // 'local' (air-gapped / offline) or 'remote' (server sync)
+
+  async function getVaultMode() {
+    try {
+      const stored = await extAPI.storage.local.get(['vaultMode', 'serverUrl']);
+      if (stored && stored.vaultMode) {
+        vaultMode = stored.vaultMode;
+        return vaultMode;
+      }
+      if (stored && stored.serverUrl) {
+        vaultMode = 'remote';
+        return 'remote';
+      }
+    } catch {}
+    return 'local';
+  }
+
   let isUnlocked = false;
   let activeAesKey = null;
   let activePrfOutput = null;
@@ -178,6 +195,11 @@
   }
 
   async function checkServerHealth(targetUrl = null) {
+    const currentMode = await getVaultMode();
+    if (!targetUrl && currentMode === 'local') {
+      serverConnected = false;
+      return false;
+    }
     try {
       const serverBase = targetUrl ? normalizeUrl(targetUrl) : await getServerBase();
       const controller = new AbortController();
@@ -197,9 +219,15 @@
     }
   }
 
-  // Periodic health check
-  checkServerHealth();
-  setInterval(checkServerHealth, 20000);
+  // Periodic health check (active only when in remote sync mode)
+  async function periodicHealthCheck() {
+    const mode = await getVaultMode();
+    if (mode === 'remote') {
+      await checkServerHealth();
+    }
+  }
+  periodicHealthCheck();
+  setInterval(periodicHealthCheck, 20000);
 
   async function saveAndSyncVault(credentialId = null) {
     if (!activeVmkKey) {
@@ -214,13 +242,17 @@
       payload: encPayload,
       updatedAt: new Date().toISOString()
     };
+    const currentMode = await getVaultMode();
     await extAPI.storage.local.set({
       encryptedCapsule: capsule,
-      syncVersion: syncVersion
+      syncVersion: syncVersion,
+      vaultMode: currentMode
     });
 
-    const primaryLocator = capsuleKeySlots.length > 0 ? capsuleKeySlots[0].locator : null;
-    pushToServer(capsule, syncVersion, credentialId || primaryLocator).catch(() => {});
+    if (currentMode === 'remote') {
+      const primaryLocator = capsuleKeySlots.length > 0 ? capsuleKeySlots[0].locator : null;
+      pushToServer(capsule, syncVersion, credentialId || primaryLocator).catch(() => {});
+    }
     return capsule;
   }
 
@@ -230,12 +262,16 @@
         switch (message?.action) {
           case 'GET_STATUS': {
             resetAutoLockTimer();
-            await checkServerHealth();
+            const currentMode = await getVaultMode();
+            if (currentMode === 'remote') {
+              await checkServerHealth();
+            }
             const serverBase = await getServerBase();
             return {
               isUnlocked,
               syncVersion,
-              serverConnected,
+              vaultMode: currentMode,
+              serverConnected: currentMode === 'remote' ? serverConnected : false,
               serverUrl: serverBase,
               count: inMemoryVault ? inMemoryVault.length : 0,
               enrolledKeys: capsuleKeySlots.length
@@ -243,16 +279,49 @@
           }
 
           case 'GET_CONFIG': {
+            const currentMode = await getVaultMode();
             const serverBase = await getServerBase();
-            return { serverUrl: serverBase, serverConnected };
+            return { serverUrl: serverBase, serverConnected, vaultMode: currentMode };
           }
 
           case 'SET_CONFIG': {
-            const newUrl = normalizeUrl(message.serverUrl);
-            const isAlive = await checkServerHealth(newUrl);
-            await extAPI.storage.local.set({ serverUrl: newUrl });
+            let currentMode = vaultMode;
+            if (message.vaultMode && (message.vaultMode === 'local' || message.vaultMode === 'remote')) {
+              currentMode = message.vaultMode;
+              vaultMode = currentMode;
+              await extAPI.storage.local.set({ vaultMode: currentMode });
+            }
+            let newUrl = null;
+            let isAlive = false;
+            if (message.serverUrl) {
+              newUrl = normalizeUrl(message.serverUrl);
+              await extAPI.storage.local.set({ serverUrl: newUrl });
+            } else {
+              newUrl = await getServerBase();
+            }
+            if (currentMode === 'remote') {
+              isAlive = await checkServerHealth(newUrl);
+            }
             serverConnected = isAlive;
-            return { success: true, serverUrl: newUrl, serverConnected: isAlive };
+            return { success: true, serverUrl: newUrl, serverConnected: isAlive, vaultMode: currentMode };
+          }
+
+          case 'SYNC_TO_SERVER': {
+            const currentMode = await getVaultMode();
+            if (currentMode !== 'remote') {
+              throw new Error('Vault is in Local-Only mode. Switch to Remote Sync mode in Settings first.');
+            }
+            const stored = await extAPI.storage.local.get(['encryptedCapsule', 'credentialId']);
+            const capsule = stored.encryptedCapsule;
+            if (!capsule) {
+              throw new Error('Vault is empty; nothing to sync.');
+            }
+            const primaryLocator = capsule.keySlots && capsule.keySlots.length > 0 ? capsule.keySlots[0].locator : null;
+            const ok = await pushToServer(capsule, syncVersion, stored.credentialId || primaryLocator);
+            if (!ok) {
+              throw new Error('Failed to reach relay server.');
+            }
+            return { success: true, version: syncVersion };
           }
 
           case 'TEST_SERVER': {
@@ -286,19 +355,22 @@
             let candidateVersion = localVersion;
             let usingRemote = false;
 
-            // Probe server for newer state or fallback if local storage is empty
-            const remoteData = await pullFromServer(credentialId);
-            if (remoteData && remoteData.capsule) {
-              const remoteVer = remoteData.version || 1;
-              if (localCapsule && remoteVer < localVersion) {
-                console.warn(`[VoidVault Security] ROLLBACK DEFENSE: Server has stale version ${remoteVer} < local version ${localVersion}. Rejecting server state.`);
-                // Heal server by re-pushing local state
-                pushToServer(localCapsule, localVersion, credentialId).catch(() => {});
-              } else if (remoteVer > localVersion || !localCapsule) {
-                console.log(`[VoidVault Sync] Server candidate is newer (${remoteVer} > ${localVersion}). Validating remote capsule.`);
-                candidateCapsule = remoteData.capsule;
-                candidateVersion = remoteVer;
-                usingRemote = true;
+            const currentMode = await getVaultMode();
+            if (currentMode === 'remote') {
+              // Probe server for newer state or fallback if local storage is empty
+              const remoteData = await pullFromServer(credentialId);
+              if (remoteData && remoteData.capsule) {
+                const remoteVer = remoteData.version || 1;
+                if (localCapsule && remoteVer < localVersion) {
+                  console.warn(`[VoidVault Security] ROLLBACK DEFENSE: Server has stale version ${remoteVer} < local version ${localVersion}. Rejecting server state.`);
+                  // Heal server by re-pushing local state
+                  pushToServer(localCapsule, localVersion, credentialId).catch(() => {});
+                } else if (remoteVer > localVersion || !localCapsule) {
+                  console.log(`[VoidVault Sync] Server candidate is newer (${remoteVer} > ${localVersion}). Validating remote capsule.`);
+                  candidateCapsule = remoteData.capsule;
+                  candidateVersion = remoteVer;
+                  usingRemote = true;
+                }
               }
             }
 

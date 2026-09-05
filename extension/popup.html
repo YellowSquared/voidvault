@@ -15,11 +15,12 @@
         <span class="brand-tag">v0.2.0</span>
       </div>
       <div class="header-actions">
-        <div id="server-status" class="status-indicator" title="Server Sync Status (Click to configure)">
+        <div id="server-status" class="status-indicator" title="Vault & Sync Mode (Click to configure)">
+          <span id="status-icon" class="status-icon hidden">🛡️</span>
           <span id="status-dot" class="dot offline"></span>
           <span id="status-label">Offline</span>
         </div>
-        <button id="btn-settings" class="btn-sm btn-icon" title="Server & Sync Settings" aria-label="Settings">⚙️</button>
+        <button id="btn-settings" class="btn-sm btn-icon" title="Vault & Sync Settings" aria-label="Settings">⚙️</button>
         <button id="btn-keys" class="btn-sm btn-outline hidden">Keys</button>
         <button id="btn-backup" class="btn-sm btn-outline hidden">Backup</button>
         <button id="btn-lock" class="btn-sm btn-outline hidden">Lock</button>
@@ -36,6 +37,7 @@
       <section id="view-locked" class="view">
         <div class="locked-panel">
           <div class="lock-icon">🔒</div>
+          <div id="locked-mode-badge" class="mode-badge">🛡️ Local Vault (Air-Gapped)</div>
           <h2 class="section-title">Vault is Locked</h2>
           <p class="section-desc">Zero-knowledge hardware capsule. Your keys are never stored on any server.</p>
 
@@ -172,29 +174,52 @@
       <div id="modal-settings" class="modal hidden">
         <div class="modal-body">
           <div class="modal-header">
-            <h3>Server & Sync Settings</h3>
+            <h3>Storage & Sync Settings</h3>
             <button id="btn-close-settings" class="btn-close">&times;</button>
           </div>
           <div class="settings-content">
-            <p class="section-desc">
-              VoidVault uses a blind relay server. The server stores only blinded ciphertext and <strong>never receives passwords, salts, or encryption keys</strong>.
-            </p>
-
             <div class="form-group">
-              <label for="input-server-url">Relay Server URL</label>
-              <input type="text" id="input-server-url" class="input-text" placeholder="http://localhost:8080" spellcheck="false" autocomplete="off">
+              <label>Storage & Operation Mode</label>
+              <div class="mode-selector">
+                <button type="button" id="btn-select-local" class="btn-mode-choice active">
+                  🛡️ Local Vault
+                </button>
+                <button type="button" id="btn-select-remote" class="btn-mode-choice">
+                  🌐 Remote Sync
+                </button>
+              </div>
             </div>
 
-            <div class="preset-row">
-              <span class="preset-label">Presets:</span>
-              <button type="button" id="btn-preset-localhost" class="btn-chip">Localhost (8080)</button>
-              <button type="button" id="btn-preset-vm" class="btn-chip">Dev VM (20.80.54.57:8080)</button>
+            <div id="box-local-info" class="mode-info-box">
+              <strong>100% Offline & Private</strong>
+              <p>Vault ciphertext is stored strictly in local browser storage. Zero network requests, zero telemetry, and zero remote server required. Decryption operates entirely in volatile memory with your physical FIDO2 key.</p>
             </div>
 
-            <div id="test-connection-status" class="connection-feedback hidden"></div>
+            <div id="box-remote-options" class="remote-options-container hidden">
+              <p class="section-desc">
+                VoidVault uses a blind relay server. The server stores only blinded ciphertext and <strong>never receives passwords, salts, or encryption keys</strong>.
+              </p>
+
+              <div class="form-group">
+                <label for="input-server-url">Relay Server URL</label>
+                <input type="text" id="input-server-url" class="input-text" placeholder="http://localhost:8080" spellcheck="false" autocomplete="off">
+              </div>
+
+              <div class="preset-row">
+                <span class="preset-label">Presets:</span>
+                <button type="button" id="btn-preset-localhost" class="btn-chip">Localhost (8080)</button>
+                <button type="button" id="btn-preset-vm" class="btn-chip">Dev VM (20.80.54.57:8080)</button>
+              </div>
+
+              <div id="test-connection-status" class="connection-feedback hidden"></div>
+
+              <div class="remote-actions-row">
+                <button type="button" id="btn-test-server" class="btn btn-outline btn-sm">Test Ping</button>
+                <button type="button" id="btn-sync-now" class="btn btn-outline btn-sm">Push/Sync Now</button>
+              </div>
+            </div>
 
             <div class="settings-actions">
-              <button type="button" id="btn-test-server" class="btn btn-outline btn-sm">Test Ping</button>
               <button type="button" id="btn-save-settings" class="btn btn-black btn-sm">Save & Apply</button>
             </div>
           </div>

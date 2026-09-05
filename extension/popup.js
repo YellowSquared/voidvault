@@ -17,8 +17,10 @@
   const btnReset = document.getElementById('btn-reset');
   const btnLock = document.getElementById('btn-lock');
   const btnBackup = document.getElementById('btn-backup');
+  const statusIcon = document.getElementById('status-icon');
   const statusDot = document.getElementById('status-dot');
   const statusLabel = document.getElementById('status-label');
+  const lockedModeBadge = document.getElementById('locked-mode-badge');
   const errorBox = document.getElementById('error-box');
   const toast = document.getElementById('toast');
 
@@ -44,10 +46,15 @@
   const btnSettings = document.getElementById('btn-settings');
   const modalSettings = document.getElementById('modal-settings');
   const btnCloseSettings = document.getElementById('btn-close-settings');
+  const btnSelectLocal = document.getElementById('btn-select-local');
+  const btnSelectRemote = document.getElementById('btn-select-remote');
+  const boxLocalInfo = document.getElementById('box-local-info');
+  const boxRemoteOptions = document.getElementById('box-remote-options');
   const inputServerUrl = document.getElementById('input-server-url');
   const btnPresetLocalhost = document.getElementById('btn-preset-localhost');
   const btnPresetVm = document.getElementById('btn-preset-vm');
   const btnTestServer = document.getElementById('btn-test-server');
+  const btnSyncNow = document.getElementById('btn-sync-now');
   const btnSaveSettings = document.getElementById('btn-save-settings');
   const testConnectionStatus = document.getElementById('test-connection-status');
 
@@ -72,6 +79,7 @@
   const fieldNotes = document.getElementById('field-notes');
 
   let activeTabDomain = '';
+  let currentVaultMode = 'local';
 
   async function init() {
     setupListeners();
@@ -96,7 +104,8 @@
       const res = await extAPI.runtime.sendMessage({ action: 'GET_STATUS' });
       if (!res) return;
 
-      updateServerStatus(res.serverConnected);
+      currentVaultMode = res.vaultMode || 'local';
+      updateServerStatus(Boolean(res.serverConnected), currentVaultMode);
 
       if (res.isUnlocked) {
         showUnlockedView();
@@ -110,13 +119,37 @@
     }
   }
 
-  function updateServerStatus(online) {
-    if (online) {
-      statusDot.className = 'dot online';
-      statusLabel.textContent = 'Sync Online';
+  function updateServerStatus(online, mode = currentVaultMode) {
+    currentVaultMode = mode;
+    if (mode === 'local') {
+      if (statusIcon) statusIcon.classList.remove('hidden');
+      if (statusDot) statusDot.classList.add('hidden');
+      if (statusLabel) statusLabel.textContent = 'Local Vault';
+      if (serverStatusBox) serverStatusBox.title = 'Local Vault (Air-Gapped) — Click to configure';
+      if (lockedModeBadge) {
+        lockedModeBadge.textContent = '🛡️ Local Vault (Air-Gapped)';
+        lockedModeBadge.className = 'mode-badge badge-local';
+      }
     } else {
-      statusDot.className = 'dot offline';
-      statusLabel.textContent = 'Local Only';
+      if (statusIcon) statusIcon.classList.add('hidden');
+      if (statusDot) statusDot.classList.remove('hidden');
+      if (online) {
+        statusDot.className = 'dot online';
+        statusLabel.textContent = 'Sync Online';
+        if (serverStatusBox) serverStatusBox.title = 'Remote Sync Online — Click to configure';
+        if (lockedModeBadge) {
+          lockedModeBadge.textContent = '🌐 Remote Sync (Online)';
+          lockedModeBadge.className = 'mode-badge badge-remote-online';
+        }
+      } else {
+        statusDot.className = 'dot offline';
+        statusLabel.textContent = 'Sync Offline';
+        if (serverStatusBox) serverStatusBox.title = 'Remote Server Offline — Click to configure';
+        if (lockedModeBadge) {
+          lockedModeBadge.textContent = '🌐 Remote Sync (Offline)';
+          lockedModeBadge.className = 'mode-badge badge-remote-offline';
+        }
+      }
     }
   }
 
@@ -503,18 +536,39 @@
         } else {
           modalBackup.classList.add('hidden');
           showToast(`✓ Restored ${res.count} secrets from offline backup`);
-          await refreshVaultList();
+          await loadSecrets(searchInput.value);
         }
       } catch (err) {
         showError('Restore error: ' + err.message);
       }
     });
 
-    // 9. Server Settings Listeners
+    // 9. Storage & Server Settings Listeners
+    let selectedSettingsMode = 'local';
+
+    function setSettingsModeUi(mode) {
+      selectedSettingsMode = mode;
+      if (mode === 'local') {
+        btnSelectLocal.classList.add('active');
+        btnSelectRemote.classList.remove('active');
+        boxLocalInfo.classList.remove('hidden');
+        boxRemoteOptions.classList.add('hidden');
+      } else {
+        btnSelectLocal.classList.remove('active');
+        btnSelectRemote.classList.add('active');
+        boxLocalInfo.classList.add('hidden');
+        boxRemoteOptions.classList.remove('hidden');
+      }
+    }
+
+    btnSelectLocal.addEventListener('click', () => setSettingsModeUi('local'));
+    btnSelectRemote.addEventListener('click', () => setSettingsModeUi('remote'));
+
     const openSettings = async () => {
       try {
         const res = await extAPI.runtime.sendMessage({ action: 'GET_CONFIG' });
         inputServerUrl.value = res?.serverUrl || 'http://localhost:8080';
+        setSettingsModeUi(res?.vaultMode || 'local');
         testConnectionStatus.classList.add('hidden');
         testConnectionStatus.textContent = '';
         modalSettings.classList.remove('hidden');
@@ -561,15 +615,42 @@
       }
     });
 
+    btnSyncNow.addEventListener('click', async () => {
+      testConnectionStatus.className = 'connection-feedback info';
+      testConnectionStatus.textContent = 'Pushing vault to server...';
+      testConnectionStatus.classList.remove('hidden');
+      btnSyncNow.disabled = true;
+
+      try {
+        const res = await extAPI.runtime.sendMessage({ action: 'SYNC_TO_SERVER' });
+        if (res && res.success) {
+          testConnectionStatus.className = 'connection-feedback success';
+          testConnectionStatus.textContent = `✓ Synced to server (v${res.version})`;
+          showToast(`✓ Synced to server (v${res.version})`);
+          updateServerStatus(true, 'remote');
+        } else {
+          throw new Error(res?.error || 'Sync failed');
+        }
+      } catch (err) {
+        testConnectionStatus.className = 'connection-feedback error';
+        testConnectionStatus.textContent = `✗ Sync error: ${err.message}`;
+        showError('Sync failed: ' + err.message);
+      } finally {
+        btnSyncNow.disabled = false;
+      }
+    });
+
     btnSaveSettings.addEventListener('click', async () => {
       try {
         const res = await extAPI.runtime.sendMessage({
           action: 'SET_CONFIG',
+          vaultMode: selectedSettingsMode,
           serverUrl: inputServerUrl.value
         });
         modalSettings.classList.add('hidden');
-        updateServerStatus(Boolean(res?.serverConnected));
-        showToast('⚙️ Server settings saved');
+        currentVaultMode = res?.vaultMode || selectedSettingsMode;
+        updateServerStatus(Boolean(res?.serverConnected), currentVaultMode);
+        showToast(currentVaultMode === 'local' ? '🛡️ Local Vault mode active' : '🌐 Remote Sync mode active');
       } catch (err) {
         showError('Failed to save settings: ' + err.message);
       }

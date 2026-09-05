@@ -87,6 +87,11 @@ body {
   color: var(--text-muted);
 }
 
+.status-icon {
+  font-size: 11px;
+  line-height: 1;
+}
+
 .dot {
   width: 7px;
   height: 7px;
@@ -157,7 +162,39 @@ body {
 
 .lock-icon {
   font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
   margin-bottom: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  color: var(--text-main);
+}
+
+.mode-badge.badge-local {
+  background: #f9fafb;
+  border-color: #d1d5db;
+  color: var(--black);
+}
+
+.mode-badge.badge-remote-online {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #065f46;
+}
+
+.mode-badge.badge-remote-offline {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
 }
 
 .section-title {
@@ -513,6 +550,63 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.mode-selector {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.btn-mode-choice {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-subtle);
+  color: var(--text-main);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.btn-mode-choice:hover {
+  border-color: var(--black);
+}
+
+.btn-mode-choice.active {
+  background: var(--black);
+  color: #ffffff;
+  border-color: var(--black);
+}
+
+.mode-info-box {
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.mode-info-box strong {
+  display: block;
+  color: var(--black);
+  margin-bottom: 4px;
+}
+
+.remote-options-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.remote-actions-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
 }
 
 .preset-row {
