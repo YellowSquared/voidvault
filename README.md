@@ -1,10 +1,21 @@
 # VoidVault
 
-> **Zero-Knowledge, Blind Hardware Password Vault Powered by WebAuthn PRF**
+> ### 🔒 In Plain English:
+> **The server never even gets a salt or a password. It's all client-side.**
+> 
+> VoidVault is an anonymous, zero-knowledge password vault powered by physical FIDO2 keys (YubiKey / Nitrokey) using the WebAuthn PRF extension.
 
-VoidVault is an anonymous, zero-knowledge password vault designed around a radical security principle: **the server is 100% blind and holds zero user metadata**. 
+---
 
-Unlike conventional vaults (Bitwarden, 1Password, KeePass) that rely on user-chosen master passwords stretched with PBKDF2/Argon2, VoidVault derives its 256-bit AES encryption keys directly inside the physical silicon of a **FIDO2 Security Key (YubiKey 5 / Nitrokey)** via the W3C WebAuthn Level 3 PRF extension (`hmac-secret`).
+## 💡 What Makes VoidVault Different?
+
+Most "zero-knowledge" password managers still send a hashed master password or salts to an authentication server to log you in. **VoidVault does not.**
+
+* **Zero Passwords:** There is no master password to type, leak, keylog, or forget.
+* **Zero Salts on Server:** The server never even receives the cryptographic salt. Salts and derivation parameters remain strictly client-side.
+* **Zero Keys on Server:** Encryption keys are derived directly from the physical silicon of your security key inside your browser. They are marked `extractable: false` and are never transmitted over the wire.
+* **Zero Metadata on Server:** The server has no user accounts, no email addresses, no domains, and no entry titles.
+* **100% Blind Bit-Bucket:** All the server ever stores is a 32-byte blind locator hash and an opaque blob of encrypted bytes. If the server is seized, subpoenaed, or compromised, the attacker gets mathematically unbreakable noise.
 
 ---
 
@@ -23,7 +34,7 @@ Unlike conventional vaults (Bitwarden, 1Password, KeePass) that rely on user-cho
 │                        │  (4) Zeroes all memory buffers immediately on lock
 └───────────▲────────────┘
             │ Opaque Ciphertext Only (Base64 random bytes)
-            │ (Keys NEVER touch the network)
+            │ (Salt & Keys NEVER touch the network)
             ▼
 ┌────────────────────────┐
 │  VoidVault Server      │  (5) Stores only:
@@ -34,9 +45,9 @@ Unlike conventional vaults (Bitwarden, 1Password, KeePass) that rely on user-cho
 ```
 
 ### Key Security Invariants:
-1. **Phishing & Keylogger Immunity:** There is **no master password**. Keyloggers, phishing sites, and shoulder-surfers cannot steal the vault key because it only exists transiently when your physical finger presses the hardware key contact.
-2. **100% Blind Server:** The server stores zero usernames, emails, website domains, secret titles, or directory paths. If the server is seized, subpoenaed, or fully hacked, the attacker gets only meaningless high-entropy ciphertext.
-3. **Non-Extractable In-Memory Keys:** Derived via native browser `crypto.subtle.deriveKey(..., extractable: false)`. Even browser devtools or rogue scripts cannot export raw symmetric key bytes.
+1. **The Server Never Gets a Salt or a Password:** Decryption is strictly local. The server cannot attempt offline brute-force attacks because it possesses neither the salt nor any password hash.
+2. **Phishing & Keylogger Immunity:** Without a master password, keyloggers and phishing sites have nothing to steal. The vault unlocks only when your physical finger touches your hardware key.
+3. **Non-Extractable In-Memory Keys:** Derived via native browser `crypto.subtle.deriveKey(..., extractable: false)`. Even browser devtools or rogue in-page scripts cannot export raw symmetric key bytes.
 4. **Anti-Abuse IP Rate Limiting:** Built-in sliding-window rate limiter prevents blob flooding (max 3 new vault creations per IP per hour; existing vault updates are unlimited). Payloads are strictly clamped to 1MB max.
 
 ---
