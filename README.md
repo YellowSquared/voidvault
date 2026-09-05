@@ -106,7 +106,38 @@ The server listens on `http://0.0.0.0:8080`.
    - **Enroll Security Key:** Touch your YubiKey to register hardware PRF credentials.
    - **Dev Quick Unlock:** Headless testing fallback with simulated hardware PRF.
 4. Click **"+ New"** to store credentials. They are encrypted client-side and synced blindly to the server.
-5. Visit any login form—click the VoidVault key badge inside the password field to autofill!
+5. Click **"⚙️" (Settings)** in the header to change your relay server URL or test ping latency.
+6. Click **"Backup"** to export your vault:
+   - **Option 2 (Encrypted Capsule - Recommended):** Downloads a sealed `.voidvault` JSON backup with **zero metadata leaked** on disk.
+   - **Option 3 (Unix `pass` Directory Export):** Downloads a standard `~/.password-store` `.zip` archive compatible with Unix `pass`.
+
+---
+
+## 📦 Packaging & AMO Signing
+
+VoidVault is designed for 100% Mozilla AMO compliance (0 errors, 0 warnings, 0 notices on `web-ext lint`).
+
+### Build Extension Package (.xpi)
+
+```bash
+npx web-ext build --source-dir extension --artifacts-dir dist --overwrite-dest --filename voidvault-v0.2.0.xpi
+```
+
+### Sign Unlisted Release (for GitHub Releases)
+
+To distribute a signed `.xpi` that users can install in standard Firefox without developer mode:
+
+1. Generate your API credentials at [addons.mozilla.org/developers/addon/api/key/](https://addons.mozilla.org/developers/addon/api/key/).
+2. Run:
+   ```bash
+   npx web-ext sign \
+     --source-dir extension \
+     --artifacts-dir dist \
+     --api-key "<YOUR_AMO_JWT_ISSUER>" \
+     --api-secret "<YOUR_AMO_JWT_SECRET>" \
+     --channel unlisted
+   ```
+3. Mozilla will automatically sign the package in ~2-5 minutes. Attach the resulting `.xpi` to your GitHub Release!
 
 ---
 
