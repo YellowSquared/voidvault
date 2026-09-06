@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoidVault — Zero-Knowledge Hardware-Derived Vault</title>
+  <meta name="description" content="Zero-knowledge password manager cryptographically bound to physical security key silicon. No master passwords, no server accounts, no salts over the wire.">
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header & Navigation -->
+  <header class="header">
+    <div class="container nav-container">
+      <a href="#" class="brand">
+        <img src="assets/logo.svg" alt="VoidVault Logo" class="brand-logo" width="32" height="32">
+        <span class="brand-name">VoidVault</span>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#simulator">Live Demo</a>
+        <a href="#how-it-works">How It Works</a>
+        <a href="#comparison">Comparison</a>
+        <a href="#branches">Ecosystem</a>
+        <a href="#quickstart">Quickstart</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a href="https://github.com/YellowSquared/voidvault" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline">
+          <svg class="github-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container hero-container">
+      <div class="badge-pill">
+        <span class="pulse-dot"></span>
+        <span>Zero-Knowledge Hardware-Derived Vault</span>
+      </div>
+
+      <h1 class="hero-title">
+        The password manager that refuses to know anything about you.
+      </h1>
+
+      <p class="hero-subtitle">
+        No master passwords. No server accounts. No salts transmitted over the network.
+        Decryption happens strictly in local volatile RAM, keyed by physical silicon via <strong>WebAuthn PRF</strong> (FIDO2 / YubiKey).
+      </p>
+
+      <div class="hero-cta-group">
+        <a href="#quickstart" class="btn btn-primary">Deploy Server & Extension</a>
+        <a href="#simulator" class="btn btn-secondary">See Attacker vs User View</a>
+        <a href="#branches" class="btn btn-outline">Explore Branches</a>
+      </div>
+
+      <!-- Trust Invariants Highlights -->
+      <div class="invariants-grid">
+        <div class="invariant-card">
+          <div class="card-icon">🔑</div>
+          <h3>Zero Master Passwords</h3>
+          <p>Nothing to type, guess, keylog, or leak. Physical silicon touch derives non-exportable cryptographic keys directly in memory.</p>
+        </div>
+        <div class="invariant-card">
+          <div class="card-icon">🛡️</div>
+          <h3>Zero Server Trust</h3>
+          <p>Assume the server host, sysadmins, cloud disks, and upstream routers are 100% hostile. They hold 0 passwords and 0 salts.</p>
+        </div>
+        <div class="invariant-card">
+          <div class="card-icon">⚡</div>
+          <h3>Non-Extractable Keys</h3>
+          <p>Derived using <code>extractable: false</code> WebCrypto AES-256-GCM. Scrubbed and zeroed from volatile memory immediately on lock.</p>
+        </div>
+        <div class="invariant-card">
+          <div class="card-icon">🔗</div>
+          <h3>Ed25519 Signed Writes</h3>
+          <p>Atomic writes require cryptographic signatures verified against self-certifying locator hashes. Immune to overwrite griefing.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Simulator: User View vs Attacker View -->
+  <section id="simulator" class="section simulator-section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">What Does an Attacker See?</h2>
+        <p class="section-desc">
+          Compare what you see in your browser when unlocked by physical silicon vs. what an adversary with root access on the server database sees.
+        </p>
+      </div>
+
+      <div class="simulator-controls">
+        <button id="btn-view-client" class="sim-toggle active">
+          👤 Your Browser (Local Unlocked View)
+        </button>
+        <button id="btn-view-attacker" class="sim-toggle">
+          💀 Compromised Server (Seized Database View)
+        </button>
+      </div>
+
+      <div class="simulator-display">
+        <!-- Client View Panel -->
+        <div id="panel-client" class="sim-panel">
+          <div class="panel-header">
+            <div class="terminal-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="panel-title">Local Browser Memory (Decrypted in Volatile RAM via FIDO2 PRF)</div>
+            <span class="status-tag status-secure">● Authenticated via Silicon</span>
+          </div>
+          <div class="vault-mock-list">
+            <div class="vault-mock-item">
+              <div class="mock-info">
+                <span class="mock-domain">github.com</span>
+                <span class="mock-user">andrey@voidvault.local</span>
+              </div>
+              <div class="mock-secret">
+                <code id="pwd-github">ghp_9K8w2xY7LmQ4vT1r0J...</code>
+                <button class="btn-copy-mock" onclick="togglePasswordVisibility('pwd-github')">Toggle</button>
+              </div>
+            </div>
+            <div class="vault-mock-item">
+              <div class="mock-info">
+                <span class="mock-domain">aws.amazon.com</span>
+                <span class="mock-user">root-admin</span>
+              </div>
+              <div class="mock-secret">
+                <code id="pwd-aws">wX9#mK$2vL@8qP&amp;zT5!e</code>
+                <button class="btn-copy-mock" onclick="togglePasswordVisibility('pwd-aws')">Toggle</button>
+              </div>
+            </div>
+            <div class="vault-mock-item">
+              <div class="mock-info">
+                <span class="mock-domain">proton.me</span>
+                <span class="mock-user">security-team</span>
+              </div>
+              <div class="mock-secret">
+                <code id="pwd-proton">4f8e-b9a2-7c3d-11e0</code>
+                <button class="btn-copy-mock" onclick="togglePasswordVisibility('pwd-proton')">Toggle</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel-footer">
+            <span>RAM Key Status: <code>extractable: false</code> (AES-256-GCM)</span>
+            <span>Auto-Lock: 15m idle timeout wipes volatile memory</span>
+          </div>
+        </div>
+
+        <!-- Attacker View Panel -->
+        <div id="panel-attacker" class="sim-panel hidden">
+          <div class="panel-header">
+            <div class="terminal-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="panel-title">Server Host SQLite Store (<code>voidvault.db</code> / Seized Cloud Disk)</div>
+            <span class="status-tag status-adversary">● Full Host Compromise</span>
+          </div>
+          <div class="adversary-content">
+            <div class="db-stat-grid">
+              <div class="db-stat">
+                <span class="stat-num">0</span>
+                <span class="stat-lbl">Master Passwords</span>
+              </div>
+              <div class="db-stat">
+                <span class="stat-num">0</span>
+                <span class="stat-lbl">Cryptographic Salts</span>
+              </div>
+              <div class="db-stat">
+                <span class="stat-num">0</span>
+                <span class="stat-lbl">User Accounts / Emails</span>
+              </div>
+              <div class="db-stat">
+                <span class="stat-num">0</span>
+                <span class="stat-lbl">Plaintext Domains</span>
+              </div>
+            </div>
+            <div class="raw-db-record">
+              <div class="db-row-label">SELECT locator, version, capsule FROM vault_records LIMIT 1;</div>
+              <pre><code>{
+  "locator": "7b8e1f4a9b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5d",
+  "version": 4,
+  "ciphertext": "z8A3+vK2lQ0j9X1mP8...[1,420 bytes of cryptographically random noise]...",
+  "blake3_digest": "4c9d8a1e2f3b0c4a5e6d7f8a9b0c1d2e",
+  "signing_public_key": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}</code></pre>
+            </div>
+            <p class="adversary-conclusion">
+              ⚠️ <strong>Result:</strong> Mathematically unbreakable noise. Because the server never receives a salt, a password hash, or an identity, an attacker cannot even initiate an offline dictionary or GPU brute-force attack.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works Architecture Pipeline -->
+  <section id="how-it-works" class="section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">The Three-Channel Pipeline</h2>
+        <p class="section-desc">How physical silicon, browser runtime isolation, and blind network relays work in harmony.</p>
+      </div>
+
+      <div class="pipeline-grid">
+        <div class="pipeline-step">
+          <div class="step-badge">Phase 1</div>
+          <div class="step-icon">🔑</div>
+          <h3>Physical Silicon Evaluation</h3>
+          <p>
+            When you touch your YubiKey, the browser invokes the W3C WebAuthn <code>prf</code> extension (CTAP2 <code>hmac-secret</code>).
+            The key evaluates an HMAC over a deterministic salt <em>inside the tamper-resistant hardware chip</em>.
+            Master keys never leave the silicon.
+          </p>
+          <ul class="step-specs">
+            <li>Origin-bound RP ID protection</li>
+            <li>Phishing immunity: fake sites get useless random output</li>
+            <li>No master password to remember or type</li>
+          </ul>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-badge">Phase 2</div>
+          <div class="step-icon">💻</div>
+          <h3>Volatile In-Memory Decryption</h3>
+          <p>
+            The 32-byte hardware PRF secret enters browser memory. WebCrypto HKDF derives:
+            <br>1. Non-extractable <strong>AES-256-GCM</strong> vault encryption key.
+            <br>2. <strong>Ed25519</strong> signing keypair for self-certifying writes.
+          </p>
+          <ul class="step-specs">
+            <li>Marked <code>extractable: false</code> (DOM scripts cannot export key)</li>
+            <li>Capsule decrypted strictly in volatile RAM</li>
+            <li>Automatic 15-minute auto-lock scrubs all memory</li>
+          </ul>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-badge">Phase 3</div>
+          <div class="step-icon">🌐</div>
+          <h3>Blind Bit-Bucket Relay</h3>
+          <p>
+            The relay server (Axum + SQLite) acts as an untrusted blind storage locker.
+            It indexes records purely by the SHA-256 hash of the client's public key (self-certifying locator).
+          </p>
+          <ul class="step-specs">
+            <li>Monotonic anti-rollback state defense (409 Conflict)</li>
+            <li>Sliding-window IP rate limiting against spam</li>
+            <li>Cryptographic alias delegation for secondary backup keys</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Comparison Matrix -->
+  <section id="comparison" class="section comparison-section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Architectural Comparison</h2>
+        <p class="section-desc">Why VoidVault provides mathematical immunity where traditional managers rely on trust.</p>
+      </div>
+
+      <div class="table-wrapper">
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Security Vector</th>
+              <th class="col-highlight">VoidVault</th>
+              <th>1Password / Bitwarden</th>
+              <th>KeePass (Local File)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Master Password</strong></td>
+              <td class="col-highlight text-success">None (Hardware Silicon Touch)</td>
+              <td class="text-warning">Required (PBKDF2 / Argon2)</td>
+              <td class="text-warning">Required</td>
+            </tr>
+            <tr>
+              <td><strong>Salt Sent to Server</strong></td>
+              <td class="col-highlight text-success">Never (Zero Salts on Server)</td>
+              <td class="text-danger">Yes (Sent on login)</td>
+              <td>N/A (No server)</td>
+            </tr>
+            <tr>
+              <td><strong>Server Accounts &amp; Metadata</strong></td>
+              <td class="col-highlight text-success">0 (Blind 32-byte locator hash)</td>
+              <td class="text-danger">Full (Email, billing, device logs)</td>
+              <td>N/A</td>
+            </tr>
+            <tr>
+              <td><strong>Seized DB Offline Brute-Force</strong></td>
+              <td class="col-highlight text-success">Mathematically Impossible (No salt/password)</td>
+              <td class="text-warning">Vulnerable to GPU cluster attacks</td>
+              <td class="text-warning">Vulnerable to GPU dictionary attacks</td>
+            </tr>
+            <tr>
+              <td><strong>Phishing Resistance</strong></td>
+              <td class="col-highlight text-success">Enforced by FIDO2 Origin RP ID</td>
+              <td class="text-warning">Dependent on master password secrecy</td>
+              <td class="text-danger">None (Can be phished/keylogged)</td>
+            </tr>
+            <tr>
+              <td><strong>In-Memory Key Hygiene</strong></td>
+              <td class="col-highlight text-success">WebCrypto non-extractable + auto-lock zeroing</td>
+              <td>Varies by client implementation</td>
+              <td>Varies (RAM scraping risk)</td>
+            </tr>
+            <tr>
+              <td><strong>Multi-Device Sync</strong></td>
+              <td class="col-highlight text-success">Blind Real-Time Relay (Self-Hostable)</td>
+              <td>Centralized proprietary cloud</td>
+              <td class="text-warning">Manual Dropbox/Syncthing sync</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Repository Ecosystem & Branches -->
+  <section id="branches" class="section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">The VoidVault Ecosystem</h2>
+        <p class="section-desc">Each component is maintained on a dedicated, production-ready branch.</p>
+      </div>
+
+      <div class="branches-grid">
+        <div class="branch-card">
+          <div class="branch-header">
+            <span class="branch-tag">Branch: main</span>
+            <span class="branch-cov">95.51% Tested</span>
+          </div>
+          <h3>Core Blind Relay Server</h3>
+          <p>
+            Ultra-fast, minimal Axum 0.8 Rust daemon and SQLite datastore.
+            Verifies self-certifying locator commitments, Ed25519 write signatures, and cryptographic alias authorizations.
+          </p>
+          <ul class="branch-features">
+            <li>Sliding-window IP rate limiting &amp; 1MB payload clamping</li>
+            <li>Native systemd Podman Quadlet container generator</li>
+            <li>Production Debian package (<code>.deb</code>) ready for APT</li>
+            <li>Graceful shutdown on <code>SIGINT</code> / <code>SIGTERM</code></li>
+          </ul>
+          <a href="https://github.com/YellowSquared/voidvault/tree/main" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline">
+            View 'main' Branch ↗
+          </a>
+        </div>
+
+        <div class="branch-card">
+          <div class="branch-header">
+            <span class="branch-tag">Branch: extension</span>
+            <span class="branch-cov">100% AMO Clean</span>
+          </div>
+          <h3>Firefox WebExtension</h3>
+          <p>
+            Manifest V3 browser client with WebAuthn PRF integration.
+            Pure client-side zero-knowledge encryption with responsive full-page desktop view.
+          </p>
+          <ul class="branch-features">
+            <li>FIDO2 WebAuthn PRF key derivation &amp; WebCrypto HKDF</li>
+            <li>Deterministic resident key handling (zero picking hangs)</li>
+            <li>Pop-out dedicated tab (<code>⛶</code>) &amp; air-gapped local mode</li>
+            <li>Export to sealed <code>.voidvault</code> or Unix <code>pass</code> format</li>
+          </ul>
+          <a href="https://github.com/YellowSquared/voidvault/tree/extension" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline">
+            View 'extension' Branch ↗
+          </a>
+        </div>
+
+        <div class="branch-card">
+          <div class="branch-header">
+            <span class="branch-tag">Branch: cli</span>
+            <span class="branch-cov">Pure Rust</span>
+          </div>
+          <h3>Headless Stateless CLI</h3>
+          <p>
+            Native terminal client compatible with the Unix <code>pass</code> password manager.
+            Features Ed25519 signing and unskippable progressive countdown backup safety.
+          </p>
+          <ul class="branch-features">
+            <li>Zero local state: pulls and pushes purely via hardware PRF</li>
+            <li>Progressive unskippable single-key backup countdown (3s, 5s, 7s)</li>
+            <li>Automated RPM packaging (Fedora, RHEL, openSUSE)</li>
+            <li>Unix pipe and clipboard friendly</li>
+          </ul>
+          <a href="https://github.com/YellowSquared/voidvault/tree/cli" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline">
+            View 'cli' Branch ↗
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quickstart Guide -->
+  <section id="quickstart" class="section quickstart-section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Quickstart &amp; Deployment</h2>
+        <p class="section-desc">Spin up your own private, air-gapped, or public blind relay in seconds.</p>
+      </div>
+
+      <div class="tabs-container">
+        <div class="tabs-nav">
+          <button class="tab-btn active" onclick="showTab('tab-quadlet')">Podman Quadlet (Systemd)</button>
+          <button class="tab-btn" onclick="showTab('tab-docker')">Docker Compose</button>
+          <button class="tab-btn" onclick="showTab('tab-cargo')">Cargo Build</button>
+          <button class="tab-btn" onclick="showTab('tab-deb')">Debian / Ubuntu Package</button>
+        </div>
+
+        <div id="tab-quadlet" class="tab-content active">
+          <p class="tab-info">Production-grade rootless container managed natively as a systemd service:</p>
+          <pre><code><span class="code-comment"># 1. Clone main branch</span>
+git clone -b main https://github.com/YellowSquared/voidvault.git
+cd voidvault
+
+<span class="code-comment"># 2. Run the turnkey Quadlet installer</span>
+./quadlet/install.sh
+
+<span class="code-comment"># 3. Verify daemon status under user systemd</span>
+systemctl --user status voidvault.service</code></pre>
+        </div>
+
+        <div id="tab-docker" class="tab-content">
+          <p class="tab-info">Standard Docker container with persistent SQLite volume:</p>
+          <pre><code><span class="code-comment"># 1. Clone main branch</span>
+git clone -b main https://github.com/YellowSquared/voidvault.git
+cd voidvault
+
+<span class="code-comment"># 2. Launch with Docker Compose</span>
+docker compose up -d
+
+<span class="code-comment"># 3. Verify health endpoint</span>
+curl http://localhost:8080/health</code></pre>
+        </div>
+
+        <div id="tab-cargo" class="tab-content">
+          <p class="tab-info">Compile and run directly with the Rust toolchain:</p>
+          <pre><code><span class="code-comment"># 1. Clone main branch</span>
+git clone -b main https://github.com/YellowSquared/voidvault.git
+cd voidvault/server
+
+<span class="code-comment"># 2. Run the test suite (18 unit & integration tests)</span>
+cargo test
+
+<span class="code-comment"># 3. Launch the high-performance release server</span>
+cargo run --release</code></pre>
+        </div>
+
+        <div id="tab-deb" class="tab-content">
+          <p class="tab-info">Install directly on Ubuntu, Debian, or Linux Mint:</p>
+          <pre><code><span class="code-comment"># 1. Build or download the .deb package from releases</span>
+cd voidvault/server
+cargo deb --no-build
+
+<span class="code-comment"># 2. Install via dpkg / apt</span>
+sudo dpkg -i target/debian/voidvault-server_0.2.0-1_amd64.deb
+
+<span class="code-comment"># 3. Service starts automatically via systemd</span>
+sudo systemctl status voidvault-server</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container footer-container">
+      <div class="footer-brand">
+        <div class="brand">
+          <img src="assets/logo.svg" alt="VoidVault Logo" width="24" height="24">
+          <span class="brand-name">VoidVault</span>
+        </div>
+        <p class="footer-tagline">Zero-knowledge by mathematics, not promises.</p>
+      </div>
+
+      <div class="footer-links">
+        <div class="footer-col">
+          <h4>Repositories</h4>
+          <a href="https://github.com/YellowSquared/voidvault/tree/main">Server Core (main)</a>
+          <a href="https://github.com/YellowSquared/voidvault/tree/extension">WebExtension</a>
+          <a href="https://github.com/YellowSquared/voidvault/tree/cli">Stateless CLI</a>
+          <a href="https://github.com/YellowSquared/voidvault/tree/website">Website</a>
+        </div>
+        <div class="footer-col">
+          <h4>Specifications</h4>
+          <a href="https://github.com/YellowSquared/voidvault/blob/main/THREAT_MODEL.md">Threat Model &amp; STRIDE</a>
+          <a href="https://w3c.github.io/webauthn/#prf-extension" target="_blank" rel="noopener">W3C WebAuthn PRF</a>
+          <a href="https://www.passwordstore.org/" target="_blank" rel="noopener">Unix pass Standard</a>
+        </div>
+        <div class="footer-col">
+          <h4>Community</h4>
+          <a href="https://github.com/YellowSquared/voidvault">GitHub Project</a>
+          <a href="https://github.com/YellowSquared/voidvault/issues">Issue Tracker</a>
+          <a href="https://github.com/YellowSquared/voidvault/blob/main/LICENSE">License (MIT/Apache-2.0)</a>
+        </div>
+      </div>
+    </div>
+    <div class="container footer-bottom">
+      <p>© 2026 VoidVault Contributors. Open-source software released under MIT or Apache-2.0 licenses.</p>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

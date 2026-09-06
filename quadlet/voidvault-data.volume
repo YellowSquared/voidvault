@@ -1,5 +1,0 @@
-[Unit]
-Description=VoidVault Persistent Storage Volume
-
-[Volume]
-VolumeName=voidvault-data
