@@ -84,6 +84,11 @@
   const fieldPassword = document.getElementById('field-password');
   const fieldNotes = document.getElementById('field-notes');
 
+  // Popout & Identity Navigation
+  const btnPopout = document.getElementById('btn-popout');
+  const btnOpenTab = document.getElementById('btn-open-tab');
+  const btnSwitchIdentity = document.getElementById('btn-switch-identity');
+
   let activeTabDomain = '';
   let currentVaultMode = 'local';
 
@@ -175,6 +180,13 @@
       warningTimerId = null;
     }
     errorBox.classList.add('hidden');
+    extAPI.storage.local.get(['credentialId']).then(res => {
+      if (res && res.credentialId && btnSwitchIdentity) {
+        btnSwitchIdentity.classList.remove('hidden');
+      } else if (btnSwitchIdentity) {
+        btnSwitchIdentity.classList.add('hidden');
+      }
+    }).catch(() => {});
   }
 
   function showUnlockedView() {
@@ -387,6 +399,35 @@
   }
 
   function setupListeners() {
+    function openDedicatedTab() {
+      if (extAPI.tabs && extAPI.tabs.create) {
+        extAPI.tabs.create({ url: extAPI.runtime.getURL('popup.html') });
+        window.close();
+      }
+    }
+
+    if (btnPopout) {
+      btnPopout.addEventListener('click', openDedicatedTab);
+    }
+    if (btnOpenTab) {
+      btnOpenTab.addEventListener('click', openDedicatedTab);
+    }
+    if (btnSwitchIdentity) {
+      btnSwitchIdentity.addEventListener('click', async () => {
+        await extAPI.storage.local.remove(['credentialId']);
+        showToast('Identity unpinned. Select key identity on next prompt.');
+        btnSwitchIdentity.classList.add('hidden');
+        setTimeout(() => {
+          btnUnlock.click();
+        }, 300);
+      });
+    }
+
+    if (window.innerWidth > 500) {
+      if (btnPopout) btnPopout.classList.add('hidden');
+      if (btnOpenTab) btnOpenTab.classList.add('hidden');
+    }
+
     // 1. Real Security Key Unlock
     btnUnlock.addEventListener('click', async () => {
       errorBox.classList.add('hidden');
@@ -395,6 +436,16 @@
 
       try {
         const stored = await extAPI.storage.local.get(['credentialId']);
+
+        // Prevent dropdown freeze if authenticator requires identity selection
+        if (!stored.credentialId && window.innerWidth <= 500) {
+          showToast('Opening tab to pair security key...');
+          setTimeout(() => {
+            openDedicatedTab();
+          }, 300);
+          return;
+        }
+
         const assertion = await VoidVaultCrypto.authenticateWithWebAuthnPrf({
           credentialId: stored.credentialId || null
         });
@@ -445,6 +496,13 @@
     // 3. Enroll New Key
     btnEnrollKey.addEventListener('click', async () => {
       errorBox.classList.add('hidden');
+      if (window.innerWidth <= 500) {
+        showToast('Opening tab to enroll security key...');
+        setTimeout(() => {
+          openDedicatedTab();
+        }, 300);
+        return;
+      }
       try {
         const reg = await VoidVaultCrypto.registerWithWebAuthnPrf({
           username: 'voidvault_user',

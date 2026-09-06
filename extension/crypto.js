@@ -217,13 +217,18 @@ const VoidVaultCrypto = (function () {
     return 'localhost';
   }
 
+  const VOIDVAULT_USER_ID = new Uint8Array([
+    0x56, 0x6f, 0x69, 0x64, 0x56, 0x61, 0x75, 0x6c, // "VoidVaul"
+    0x74, 0x2d, 0x55, 0x73, 0x65, 0x72, 0x2d, 0x31  // "t-User-1"
+  ]);
+
   async function registerWithWebAuthnPrf({ username = 'voidvault_user', displayName = 'VoidVault User' } = {}) {
     if (typeof navigator === 'undefined' || !navigator.credentials) {
       throw new Error('WebAuthn is not supported in this environment');
     }
 
     const challenge = crypto.getRandomValues(new Uint8Array(32));
-    const userId = crypto.getRandomValues(new Uint8Array(16));
+    const userId = VOIDVAULT_USER_ID;
     const rpId = resolveRpId();
 
     const credential = await navigator.credentials.create({

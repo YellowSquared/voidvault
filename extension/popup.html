@@ -20,6 +20,7 @@
           <span id="status-dot" class="dot offline"></span>
           <span id="status-label">Offline</span>
         </div>
+        <button id="btn-popout" class="btn-sm btn-icon" title="Open in Dedicated Tab" aria-label="Open in Dedicated Tab">⛶</button>
         <button id="btn-settings" class="btn-sm btn-icon" title="Vault & Sync Settings" aria-label="Settings">⚙️</button>
         <button id="btn-keys" class="btn-sm btn-outline hidden">Keys</button>
         <button id="btn-backup" class="btn-sm btn-outline hidden">Backup</button>
@@ -44,8 +45,14 @@
           <button id="btn-unlock" class="btn btn-black">
             Unlock with Security Key
           </button>
+          <button id="btn-open-tab" class="btn-link text-muted prompt-open-tab" title="Open in full tab to resolve multi-identity prompts">
+            Key prompt not appearing? Open in full tab ↗
+          </button>
 
           <div class="alt-actions">
+            <button id="btn-switch-identity" class="btn btn-outline hidden">
+              Switch Security Key Identity
+            </button>
             <button id="btn-dev-unlock" class="btn btn-outline">
               Dev Quick Unlock (Simulated PRF)
             </button>

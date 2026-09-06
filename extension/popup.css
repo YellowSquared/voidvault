@@ -34,6 +34,27 @@ body {
   line-height: 1.4;
 }
 
+/* Dedicated Tab / Full Page Layout */
+@media (min-width: 500px) {
+  body {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #f8fafc;
+  }
+  .app {
+    width: 440px;
+    height: 620px;
+    max-height: 90vh;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+    background-color: var(--bg-main);
+  }
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -270,6 +291,11 @@ body {
 
 .btn-link:hover {
   color: var(--black);
+}
+
+.prompt-open-tab {
+  margin-top: 8px;
+  font-size: 11px;
 }
 
 .text-danger {
