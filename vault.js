@@ -41,8 +41,6 @@
   const pingResult = document.getElementById('ping-result');
   const btnUnlockHw = document.getElementById('btn-unlock-hw');
   const btnDevUnlock = document.getElementById('btn-dev-unlock');
-  const btnEnrollHw = document.getElementById('btn-enroll-hw');
-  const btnSwitchIdentity = document.getElementById('btn-switch-identity');
 
   // Unlocked View Elements
   const activeLocatorText = document.getElementById('active-locator-text');
@@ -378,15 +376,6 @@
     viewLocked.classList.remove('hidden');
     viewUnlocked.classList.add('hidden');
     if (btnHeaderLock) btnHeaderLock.classList.add('hidden');
-
-    const pinnedCred = localStorage.getItem('voidvault_credential_id');
-    if (btnSwitchIdentity) {
-      if (pinnedCred) {
-        btnSwitchIdentity.classList.remove('hidden');
-      } else {
-        btnSwitchIdentity.classList.add('hidden');
-      }
-    }
   }
 
   function showUnlockedView() {
@@ -602,23 +591,72 @@
       });
     }
 
-    // 1. Hardware Security Key Unlock (WebAuthn PRF)
+    // 1. Hardware Security Key: Unified Login & Auto-Register (WebAuthn PRF)
     if (btnUnlockHw) {
+      let pendingRegistration = false;
+
       btnUnlockHw.addEventListener('click', async () => {
         hideError();
         btnUnlockHw.disabled = true;
-        btnUnlockHw.textContent = 'Touch your YubiKey now...';
+
         try {
           const pinnedCred = localStorage.getItem('voidvault_credential_id');
-          const assertion = await VoidVaultCrypto.authenticateWithWebAuthnPrf({
-            credentialId: pinnedCred || null
-          });
-          await completeUnlock(assertion.prfOutput, assertion.credentialId);
+
+          if (pendingRegistration) {
+            btnUnlockHw.textContent = 'Touch Key to Create Vault...';
+            const reg = await VoidVaultCrypto.registerWithWebAuthnPrf({
+              username: 'voidvault_user',
+              displayName: 'VoidVault User'
+            });
+            localStorage.setItem('voidvault_credential_id', reg.credentialId);
+            let prf = reg.prfOutput;
+            if (!prf) {
+              btnUnlockHw.textContent = 'Touch Key to Derive PRF...';
+              const assertion = await VoidVaultCrypto.authenticateWithWebAuthnPrf({ credentialId: reg.credentialId });
+              prf = assertion.prfOutput;
+            }
+            pendingRegistration = false;
+            showToast('Security Key registered! Initializing vault...');
+            await completeUnlock(prf, reg.credentialId);
+            return;
+          }
+
+          btnUnlockHw.textContent = 'Touch Security Key...';
+
+          let authResult = null;
+          try {
+            authResult = await VoidVaultCrypto.loginOrRegisterWithWebAuthn({
+              preferredCredentialId: pinnedCred || null
+            });
+          } catch (authErr) {
+            console.warn('[VoidVault Web] Unified login/register notice:', authErr);
+            if (authErr.name === 'AbortError') {
+              throw new Error('Authentication cancelled by user.');
+            }
+            // If browser required a fresh user gesture to register:
+            pendingRegistration = true;
+            btnUnlockHw.disabled = false;
+            btnUnlockHw.textContent = '🛡️ Key Unregistered — Click to Register Key';
+            showToast('No vault found on this key. Click above to register.');
+            return;
+          }
+
+          if (authResult) {
+            pendingRegistration = false;
+            localStorage.setItem('voidvault_credential_id', authResult.credentialId);
+            if (authResult.action === 'register') {
+              showToast('Security Key registered! Initializing vault...');
+            }
+            await completeUnlock(authResult.prfOutput, authResult.credentialId);
+          }
         } catch (err) {
+          console.error('[VoidVault Web] Login/Register failed:', err);
           showError(err.message || 'Security key touch cancelled or failed');
         } finally {
-          btnUnlockHw.disabled = false;
-          btnUnlockHw.textContent = 'Touch Security Key to Connect';
+          if (!pendingRegistration && !isUnlocked) {
+            btnUnlockHw.disabled = false;
+            btnUnlockHw.textContent = '🔑 Login with Security Key';
+          }
         }
       });
     }
@@ -633,38 +671,6 @@
         } catch (err) {
           showError(err.message || 'Dev unlock failed');
         }
-      });
-    }
-
-    // 3. Enroll New Key
-    if (btnEnrollHw) {
-      btnEnrollHw.addEventListener('click', async () => {
-        hideError();
-        try {
-          const reg = await VoidVaultCrypto.registerWithWebAuthnPrf({
-            username: 'voidvault_user',
-            displayName: 'VoidVault Web User'
-          });
-          localStorage.setItem('voidvault_credential_id', reg.credentialId);
-          showToast('Security Key registered! Now touching key to unlock...');
-          setTimeout(() => {
-            btnUnlockHw.click();
-          }, 300);
-        } catch (err) {
-          showError(err.message || 'Key registration failed');
-        }
-      });
-    }
-
-    // 4. Switch Identity (Clear pinned credential)
-    if (btnSwitchIdentity) {
-      btnSwitchIdentity.addEventListener('click', () => {
-        localStorage.removeItem('voidvault_credential_id');
-        btnSwitchIdentity.classList.add('hidden');
-        showToast('Identity unpinned. Authenticator will prompt on next touch.');
-        setTimeout(() => {
-          btnUnlockHw.click();
-        }, 300);
       });
     }
 

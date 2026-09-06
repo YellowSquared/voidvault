@@ -242,17 +242,28 @@ const VoidVaultCrypto = (function () {
         ],
         authenticatorSelection: {
           userVerification: 'preferred',
-          residentKey: 'preferred',
-          requireResidentKey: false
+          residentKey: 'required',
+          requireResidentKey: true
         },
         timeout: 60000,
-        extensions: { prf: {} }
+        extensions: {
+          prf: {
+            eval: { first: DEFAULT_HKDF_SALT }
+          }
+        }
       }
     });
 
+    const clientExtensions = credential.getClientExtensionResults ? credential.getClientExtensionResults() : null;
+    let prfOutput = null;
+    if (clientExtensions?.prf?.results?.first) {
+      prfOutput = new Uint8Array(clientExtensions.prf.results.first);
+    }
+
     return {
       credentialId: bufferToBase64Url(credential.rawId),
-      rawId: credential.rawId
+      rawId: credential.rawId,
+      prfOutput
     };
   }
 
@@ -305,6 +316,55 @@ const VoidVaultCrypto = (function () {
     return {
       prfOutput,
       credentialId: bufferToBase64Url(assertion.rawId)
+    };
+  }
+
+  async function loginOrRegisterWithWebAuthn({ preferredCredentialId = null } = {}) {
+    if (typeof navigator === 'undefined' || !navigator.credentials) {
+      throw new Error('WebAuthn is not supported in this environment');
+    }
+
+    // Phase 1: Try preferred credential ID if available in local storage
+    if (preferredCredentialId) {
+      try {
+        const assertion = await authenticateWithWebAuthnPrf({ credentialId: preferredCredentialId });
+        return {
+          action: 'login',
+          credentialId: assertion.credentialId,
+          prfOutput: assertion.prfOutput
+        };
+      } catch (err) {
+        console.warn('[VoidVault Crypto] Preferred credential authentication failed:', err);
+        if (err.name === 'AbortError') throw err;
+      }
+    }
+
+    // Phase 2: Try discoverable resident credential lookup
+    try {
+      const assertion = await authenticateWithWebAuthnPrf({ credentialId: null });
+      return {
+        action: 'login',
+        credentialId: assertion.credentialId,
+        prfOutput: assertion.prfOutput
+      };
+    } catch (err) {
+      console.warn('[VoidVault Crypto] Discoverable lookup failed or no resident key:', err);
+      if (err.name === 'AbortError') throw err;
+    }
+
+    // Phase 3: No existing resident credential found on key — register singleton key
+    const reg = await registerWithWebAuthnPrf();
+    let prfOutput = reg.prfOutput;
+
+    if (!prfOutput) {
+      const assertion = await authenticateWithWebAuthnPrf({ credentialId: reg.credentialId });
+      prfOutput = assertion.prfOutput;
+    }
+
+    return {
+      action: 'register',
+      credentialId: reg.credentialId,
+      prfOutput: prfOutput
     };
   }
 
@@ -462,6 +522,7 @@ const VoidVaultCrypto = (function () {
     decryptPayloadWithVmk,
     registerWithWebAuthnPrf,
     authenticateWithWebAuthnPrf,
+    loginOrRegisterWithWebAuthn,
     deriveSimulatedPrf
   };
 })();
