@@ -274,55 +274,112 @@
             <tr>
               <th>Security Vector</th>
               <th class="col-highlight">VoidVault</th>
+              <th>Linux pass (zx2c4)</th>
               <th>1Password / Bitwarden</th>
               <th>KeePass (Local File)</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>Master Password</strong></td>
-              <td class="col-highlight text-success">None (Hardware Silicon Touch)</td>
-              <td class="text-warning">Required (PBKDF2 / Argon2)</td>
-              <td class="text-warning">Required</td>
+              <td><strong>Master Authentication</strong></td>
+              <td class="col-highlight text-success">Hardware Silicon Touch (FIDO2 PRF)</td>
+              <td class="text-warning">GPG Keyphrase / Smartcard</td>
+              <td class="text-warning">Master Password (PBKDF2/Argon2)</td>
+              <td class="text-warning">Master Password / Keyfile</td>
             </tr>
             <tr>
-              <td><strong>Salt Sent to Server</strong></td>
-              <td class="col-highlight text-success">Never (Zero Salts on Server)</td>
-              <td class="text-danger">Yes (Sent on login)</td>
-              <td>N/A (No server)</td>
+              <td><strong>Remote Sync Metadata Leakage</strong></td>
+              <td class="col-highlight text-success"><strong>Zero</strong> (1 Opaque Padded Capsule)</td>
+              <td class="text-danger"><strong>Catastrophic</strong> (Plaintext paths: <code>finance/chase.gpg</code>, commit logs)</td>
+              <td class="text-warning">Account metadata &amp; item count exposed to cloud</td>
+              <td class="text-warning">Sync conflicts with whole file sync</td>
             </tr>
             <tr>
-              <td><strong>Server Accounts &amp; Metadata</strong></td>
+              <td><strong>Server Accounts &amp; Identities</strong></td>
               <td class="col-highlight text-success">0 (Blind 32-byte locator hash)</td>
+              <td>N/A (Git server stores cleartext file paths)</td>
               <td class="text-danger">Full (Email, billing, device logs)</td>
+              <td>N/A (Local only)</td>
+            </tr>
+            <tr>
+              <td><strong>Salt / Secrets Sent to Server</strong></td>
+              <td class="col-highlight text-success">Never (Zero Salts on Server)</td>
+              <td>N/A</td>
+              <td class="text-danger">Yes (Sent on login)</td>
               <td>N/A</td>
             </tr>
             <tr>
               <td><strong>Seized DB Offline Brute-Force</strong></td>
               <td class="col-highlight text-success">Mathematically Impossible (No salt/password)</td>
+              <td>Vulnerable if weak GPG passphrase used</td>
               <td class="text-warning">Vulnerable to GPU cluster attacks</td>
               <td class="text-warning">Vulnerable to GPU dictionary attacks</td>
             </tr>
             <tr>
               <td><strong>Phishing Resistance</strong></td>
               <td class="col-highlight text-success">Enforced by FIDO2 Origin RP ID</td>
+              <td class="text-danger">None (GPG decrypts regardless of website)</td>
               <td class="text-warning">Dependent on master password secrecy</td>
               <td class="text-danger">None (Can be phished/keylogged)</td>
             </tr>
             <tr>
-              <td><strong>In-Memory Key Hygiene</strong></td>
-              <td class="col-highlight text-success">WebCrypto non-extractable + auto-lock zeroing</td>
-              <td>Varies by client implementation</td>
-              <td>Varies (RAM scraping risk)</td>
+              <td><strong>Browser Integration</strong></td>
+              <td class="col-highlight text-success">Native MV3 WebExtension &amp; Web Vault (sub-20ms)</td>
+              <td class="text-danger">Brittle native messaging daemon (passff)</td>
+              <td>Native extensions</td>
+              <td class="text-warning">Third-party native plugins (keepasshttp)</td>
             </tr>
             <tr>
-              <td><strong>Multi-Device Sync</strong></td>
-              <td class="col-highlight text-success">Blind Real-Time Relay (Self-Hostable)</td>
-              <td>Centralized proprietary cloud</td>
-              <td class="text-warning">Manual Dropbox/Syncthing sync</td>
+              <td><strong>Unix Philosophy &amp; Portability</strong></td>
+              <td class="col-highlight text-success">100% <code>pass</code> format compatible + 1-click export</td>
+              <td class="text-success">Native unix standard</td>
+              <td class="text-danger">Proprietary cloud format</td>
+              <td class="text-warning">.kdbx XML format</td>
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- Linux pass Deep-Dive Metadata Leakage Section -->
+      <div class="pass-comparison-box">
+        <div class="pass-comparison-header">
+          <div class="card-icon">🐧</div>
+          <div>
+            <h3 class="pass-box-title">Why VoidVault vs. Linux <code>pass</code>?</h3>
+            <p class="pass-box-subtitle">Preserving the beloved Unix philosophy while eliminating the fatal metadata leakage of Git.</p>
+          </div>
+        </div>
+
+        <div class="pass-contrast-grid">
+          <div class="contrast-col contrast-bad">
+            <div class="contrast-col-title">❌ When You Sync Linux <code>pass</code> to Git:</div>
+            <p class="contrast-col-desc">While passwords inside each <code>.gpg</code> file are encrypted, Git and the server see your entire directory hierarchy in plaintext:</p>
+            <pre><code><span class="code-comment"># Git server &amp; network eavesdropper sees:</span>
+~/.password-store/
+├── banking/
+│   ├── chase.com.gpg       <span class="code-leak">← Leaks: You bank at Chase</span>
+│   └── schwab.com.gpg      <span class="code-leak">← Leaks: You have a Schwab brokerage</span>
+├── medical/
+│   └── cancer-center.gpg   <span class="code-leak">← Leaks: Highly sensitive health history</span>
+└── adult/
+    └── secrets.gpg         <span class="code-leak">← Leaks: Personal lifestyle metadata</span></code></pre>
+            <div class="contrast-verdict text-danger">⚠️ Anyone with read access to the Git repo or server logs knows every bank, hospital, and service you use.</div>
+          </div>
+
+          <div class="contrast-col contrast-good">
+            <div class="contrast-col-title">✅ How VoidVault Fixes It:</div>
+            <p class="contrast-col-desc">VoidVault stores secrets in the exact same Unix multiline format, but wraps everything into a <strong>Single Unified Encrypted Blob Capsule</strong>:</p>
+            <pre><code><span class="code-comment"># VoidVault server &amp; network eavesdropper sees:</span>
+voidvault-server / SQLite:
+└── 7b8e1f4a9b2c3d4e5f60... (SHA-256 Locator):
+    └── [ 1 opaque AES-256-GCM ciphertext blob ]
+        - 0 service names
+        - 0 folder paths
+        - 0 entry counts
+        - Padded discrete sizing</code></pre>
+            <div class="contrast-verdict text-success">🔒 Zero metadata leaked. Plus: 1-click bi-directional export back to standard Unix <code>pass</code> anytime!</div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
