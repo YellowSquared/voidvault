@@ -20,6 +20,10 @@ hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
 [package.metadata.deb]
 maintainer = "YellowSquared <voidvault@yellowsquared.io>"
 copyright = "2026 YellowSquared"
