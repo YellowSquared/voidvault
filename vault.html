@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoidVault — Web Vault (FIDO2 / YubiKey)</title>
+  <meta name="description" content="Direct client-side Web Vault connected to the VoidVault relay server. Zero-knowledge hardware decryption via WebAuthn PRF.">
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="vault-body">
+  <!-- Header -->
+  <header class="header">
+    <div class="container nav-container">
+      <div class="brand">
+        <a href="index.html" class="brand" title="Return to Homepage">
+          <img src="assets/logo.svg" alt="VoidVault Logo" class="brand-logo" width="32" height="32">
+          <span class="brand-name">VoidVault</span>
+        </a>
+        <span class="vault-app-badge">Web Vault</span>
+      </div>
+
+      <div class="vault-header-actions">
+        <div class="server-status-pill" title="Relay Server Connection Status">
+          <span id="server-status-badge" class="status-tag status-adversary">● Checking...</span>
+          <span id="server-latency-label" class="server-latency-text">http://localhost:8080</span>
+        </div>
+        <button id="btn-header-lock" class="btn btn-sm btn-outline hidden">🔒 Lock</button>
+        <a href="index.html" class="btn btn-sm btn-outline">Home ↗</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Global Alert & Toast Banners -->
+  <div class="container message-container">
+    <div id="error-box" class="alert-box alert-danger hidden"></div>
+    <div id="toast" class="toast-popup hidden"></div>
+  </div>
+
+  <!-- MAIN APP VIEW -->
+  <main class="container vault-main">
+    <!-- 1. LOCKED VIEW -->
+    <section id="view-locked" class="vault-panel-locked">
+      <div class="locked-card">
+        <div class="locked-icon-shield">🔒</div>
+        <h2 class="locked-heading">Unlock Your Hardware Vault</h2>
+        <p class="locked-desc">
+          Cryptographically bound to your physical security key silicon.
+          Decryption runs strictly in volatile RAM — your keys are never stored on any server.
+        </p>
+
+        <!-- Primary Action -->
+        <button id="btn-unlock-hw" class="btn btn-primary btn-lg btn-block">
+          🔑 Touch Security Key to Connect
+        </button>
+
+        <!-- Secondary Actions -->
+        <div class="locked-alt-actions">
+          <button id="btn-switch-identity" class="btn btn-outline btn-block hidden">
+            🔄 Switch Security Key Identity
+          </button>
+          <button id="btn-enroll-hw" class="btn btn-outline btn-block">
+            🛡️ Enroll New Security Key (FIDO2 PRF)
+          </button>
+          <button id="btn-dev-unlock" class="btn btn-secondary btn-block">
+            ⚡ Dev Quick Unlock (Simulated PRF)
+          </button>
+        </div>
+
+        <!-- Server Configuration Drawer -->
+        <div class="server-config-card">
+          <div class="server-config-header">
+            <span class="server-config-title">Relay Server Target</span>
+            <span id="ping-result" class="ping-status-text"></span>
+          </div>
+          <div class="server-input-group">
+            <input type="text" id="input-server-url" class="form-input" value="http://localhost:8080" placeholder="http://localhost:8080">
+            <button id="btn-test-ping" class="btn btn-sm btn-outline">Ping</button>
+          </div>
+          <p class="server-config-hint">
+            The server is an untrusted blind relay (Axum + SQLite). It only stores your blind 32-byte locator hash and opaque ciphertext.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. UNLOCKED VIEW -->
+    <section id="view-unlocked" class="vault-panel-unlocked hidden">
+      <!-- Vault Status Bar -->
+      <div class="unlocked-status-bar">
+        <div class="status-meta-group">
+          <div class="locator-display" title="Your Blind Locator Hash (SHA-256 of Ed25519 public key)">
+            <span class="meta-label">Locator:</span>
+            <code id="active-locator-text" class="meta-code">Loading...</code>
+            <button id="btn-copy-locator" class="btn-sm btn-outline" title="Copy Locator Hash">Copy</button>
+          </div>
+          <div class="version-display">
+            <span class="meta-label">State:</span>
+            <span id="sync-version-label" class="badge-version">v1</span>
+          </div>
+        </div>
+
+        <div class="autolock-display" title="Time remaining before memory is zeroed">
+          <span class="meta-label">Auto-Lock:</span>
+          <span id="autolock-timer-label" class="autolock-timer">15:00</span>
+        </div>
+      </div>
+
+      <!-- Action & Search Toolbar -->
+      <div class="vault-toolbar">
+        <div class="search-box">
+          <input type="text" id="search-input" class="form-input search-input" placeholder="Search by title, domain, username, or notes..." autocomplete="off">
+        </div>
+        <div class="toolbar-btn-group">
+          <button id="btn-new-secret" class="btn btn-primary">+ New Secret</button>
+          <button id="btn-sync-now" class="btn btn-outline" title="Pull latest updates and push in-memory changes to server">Sync with Server</button>
+          <button id="btn-export-backup" class="btn btn-outline" title="Export sealed .voidvault encrypted backup">Export Backup</button>
+        </div>
+      </div>
+
+      <!-- Secrets Grid -->
+      <div id="secrets-container" class="secrets-grid">
+        <!-- Dynamically populated via vault.js -->
+      </div>
+
+      <!-- Empty State Notice -->
+      <div id="empty-vault-notice" class="empty-state-card hidden">
+        Your vault is currently empty. Click <strong>"+ New Secret"</strong> to add your first password!
+      </div>
+    </section>
+  </main>
+
+  <!-- Add / Edit Secret Modal -->
+  <div id="modal-secret" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title" class="modal-heading">Add New Secret</h3>
+        <button id="btn-close-modal" class="btn-modal-close">&times;</button>
+      </div>
+
+      <form id="form-secret" class="modal-form">
+        <input type="hidden" id="field-id">
+
+        <div class="form-group">
+          <label for="field-title" class="form-label">Title / Service</label>
+          <input type="text" id="field-title" class="form-input" placeholder="e.g. GitHub, AWS Console, ProtonMail" required>
+        </div>
+
+        <div class="form-group">
+          <label for="field-domain" class="form-label">Website Domain / URL</label>
+          <input type="text" id="field-domain" class="form-input" placeholder="e.g. github.com">
+        </div>
+
+        <div class="form-group">
+          <label for="field-username" class="form-label">Username / Email</label>
+          <input type="text" id="field-username" class="form-input" placeholder="e.g. andrey@voidvault.local">
+        </div>
+
+        <div class="form-group">
+          <div class="form-label-row">
+            <label for="field-password" class="form-label">Password</label>
+            <button type="button" id="btn-generate-pass" class="btn-link-action">🎲 Generate Strong</button>
+          </div>
+          <input type="text" id="field-password" class="form-input font-mono" placeholder="Enter or generate password" required>
+        </div>
+
+        <div class="form-group">
+          <label for="field-notes" class="form-label">Notes (Unix <code>pass</code> format compatible)</label>
+          <textarea id="field-notes" class="form-textarea" rows="3" placeholder="Additional metadata, recovery codes, or notes..."></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-modal" class="btn btn-outline">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save &amp; Sync to Server</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="crypto.js"></script>
+  <script src="vault.js"></script>
+</body>
+</html>
