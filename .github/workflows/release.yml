@@ -9,38 +9,6 @@ permissions:
   contents: write
 
 jobs:
-  build-extension:
-    name: Build WebExtension Package
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Build WebExtension XPI
-        run: |
-          mkdir -p dist
-          npx web-ext build --source-dir extension --overwrite-dest --artifacts-dir dist
-          VERSION="${GITHUB_REF_NAME#v}"
-          EXT_FILE=$(ls dist/*.zip 2>/dev/null || ls dist/*.xpi)
-          mv "$EXT_FILE" "dist/voidvault-extension-v${VERSION}.xpi"
-          cd dist
-          sha256sum "voidvault-extension-v${VERSION}.xpi" > "voidvault-extension-v${VERSION}.xpi.sha256"
-
-      - name: Upload Extension to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            dist/voidvault-extension-*.xpi
-            dist/voidvault-extension-*.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   build-server:
     name: Build Server (${{ matrix.target }})
     runs-on: ${{ matrix.os }}

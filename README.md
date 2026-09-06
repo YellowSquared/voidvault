@@ -72,21 +72,23 @@ Most "zero-knowledge" password managers still send a hashed master password or s
 
 ---
 
-## 📂 Project Structure
+## 📂 Project Structure & Branches
+
+The VoidVault project is organized across dedicated, focused branches:
+
+* **`main` (this branch):** High-performance, 95%+ verified zero-knowledge blind relay server, containers, and daemon packaging.
+* **[`extension`](https://github.com/YellowSquared/voidvault/tree/extension):** Firefox Manifest V3 WebExtension (WebAuthn PRF, client-side zero-knowledge encryption, responsive popup & full-tab UX).
+* **[`cli`](https://github.com/YellowSquared/voidvault/tree/cli):** Headless, stateless command-line interface with Ed25519 signed writes, self-certifying locators, and RPM packaging.
 
 ```
-voidvault/
-├── extension/             # Firefox Manifest V3 WebExtension
-│   ├── manifest.json      # MV3 configuration (100% AMO compliant, 0 warnings)
-│   ├── crypto.js          # WebAuthn PRF + WebCrypto HKDF + AES-256-GCM
-│   ├── background.js      # Volatile in-memory vault, auto-lock, remote sync
-│   ├── popup.html/css/js  # Clean minimalist white/black UX (zero animations)
-│   ├── content.js/css     # Non-intrusive in-input badge and autofill
-│   └── test-page.html     # Minimal test bench portal
-├── server/                # Lightweight Blind Daemon
-│   ├── Cargo.toml         # Axum 0.8, Tokio, SQLx SQLite, Tower-HTTP
-│   └── src/
-│       └── main.rs        # Blind vault API + IP rate limiter + SQLite store
+voidvault/ (main branch)
+├── server/                # Lightweight Blind Relay Server (Axum, SQLite)
+│   ├── Cargo.toml         # Axum 0.8, Tokio, SQLx, Tower-HTTP, Ed25519-dalek
+│   ├── src/
+│   │   ├── lib.rs         # Modular server library (router, rate limiting, crypto verification)
+│   │   └── main.rs        # Production daemon entrypoint & signal handling
+│   └── tests/
+│       └── api_tests.rs   # Comprehensive integration test suite (95.51% coverage)
 ├── quadlet/               # Native Podman Quadlet (systemd generator)
 │   ├── voidvault.container# Rootless container systemd specification
 │   ├── voidvault-data.volume # Persistent volume definition
@@ -156,56 +158,25 @@ The server listens on `http://0.0.0.0:8080`.
 - `GET /api/vault/:locator` — Unguarded public ciphertext read
 - `POST /api/vault/:locator` — Guarded atomic ciphertext upsert (IP-throttled for new creations)
 
-### 2. Load the Firefox Extension
+### 2. Client Interfaces
 
-1. Open Firefox and navigate to `about:debugging#/runtime/this-firefox`.
-2. Click **"Load Temporary Add-on..."**.
-3. Select `extension/manifest.json`.
-4. The **VoidVault** icon will appear in your Firefox toolbar.
+Client implementations are maintained on their respective dedicated branches:
 
-### 3. Usage & Testing
-
-1. If connecting to a remote server, forward ports via SSH:
-   ```bash
-   ssh -N -L 8080:localhost:8080 -L 8081:localhost:8081 user@your-server-ip
-   ```
-2. Open `http://localhost:8081/test-page.html` (or run `python3 -m http.server 8081 --directory extension`).
-3. Click the VoidVault toolbar icon:
-   - **Enroll Security Key:** Touch your YubiKey to register hardware PRF credentials.
-   - **Dev Quick Unlock:** Headless testing fallback with simulated hardware PRF.
-4. Click **"+ New"** to store credentials. They are encrypted client-side and synced blindly to the server.
-5. Click **"⚙️" (Settings)** in the header to change your relay server URL or test ping latency.
-6. Click **"Backup"** to export your vault:
-   - **Option 2 (Encrypted Capsule - Recommended):** Downloads a sealed `.voidvault` JSON backup with **zero metadata leaked** on disk.
-   - **Option 3 (Unix `pass` Directory Export):** Downloads a standard `~/.password-store` `.zip` archive compatible with Unix `pass`.
+* **Firefox WebExtension:** Switch to the [`extension`](https://github.com/YellowSquared/voidvault/tree/extension) branch to build, lint (`web-ext`), and test the browser extension.
+* **Stateless CLI:** Switch to the [`cli`](https://github.com/YellowSquared/voidvault/tree/cli) branch to build the headless Rust CLI with Ed25519 signing and warning countdowns.
 
 ---
 
-## 📦 Packaging & AMO Signing
+## 📦 Debian Package (.deb)
 
-VoidVault is designed for 100% Mozilla AMO compliance (0 errors, 0 warnings, 0 notices on `web-ext lint`).
-
-### Build Extension Package (.xpi)
+The relay server includes native Debian packaging:
 
 ```bash
-npx web-ext build --source-dir extension --artifacts-dir dist --overwrite-dest --filename voidvault-v0.2.0.xpi
+cd server
+cargo deb --no-build
+# Output: target/debian/voidvault-server_0.2.0-1_amd64.deb
+sudo dpkg -i target/debian/voidvault-server_0.2.0-1_amd64.deb
 ```
-
-### Sign Unlisted Release (for GitHub Releases)
-
-To distribute a signed `.xpi` that users can install in standard Firefox without developer mode:
-
-1. Generate your API credentials at [addons.mozilla.org/developers/addon/api/key/](https://addons.mozilla.org/developers/addon/api/key/).
-2. Run:
-   ```bash
-   npx web-ext sign \
-     --source-dir extension \
-     --artifacts-dir dist \
-     --api-key "<YOUR_AMO_JWT_ISSUER>" \
-     --api-secret "<YOUR_AMO_JWT_SECRET>" \
-     --channel unlisted
-   ```
-3. Mozilla will automatically sign the package in ~2-5 minutes. Attach the resulting `.xpi` to your GitHub Release!
 
 ---
 

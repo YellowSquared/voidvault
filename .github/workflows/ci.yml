@@ -11,33 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  extension:
-    name: Lint & Package WebExtension
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Lint Extension (Mozilla AMO standard)
-        run: npx web-ext lint --source-dir extension
-
-      - name: Build Extension Package
-        run: |
-          mkdir -p dist
-          npx web-ext build --source-dir extension --overwrite-dest --artifacts-dir dist
-
-      - name: Upload Extension Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: voidvault-webextension
-          path: dist/*
-          retention-days: 7
-
   server:
     name: Test & Lint Rust Server
     runs-on: ubuntu-latest
